@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { splitCommandLine, firstNonEmpty } from './server-command.js';
 import { createLogger } from './logger.js';
 import {
@@ -134,7 +135,10 @@ function makeId(): string {
 }
 
 /**
- * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 查 sessionId → process.cwd() 兜底。
+ * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 查 sessionId → 用户家目录兜底。
+ *
+ * 默认工作区会话没有绑定具体项目目录，此时终端应在用户家目录（~）启动，
+ * 而非 DSH 进程的 process.cwd()（可能是安装目录或其他非预期路径）。
  *
  * @param cwd - 客户端传的工作目录
  * @param sessionId - 所属 DSH 会话 id（用于 workspaceRegistry 查工作区路径）
@@ -165,7 +169,8 @@ function resolveSessionCwd(
       /* 路径缺失或不可访问——试下一候选 */
     }
   }
-  return process.cwd();
+  // 兜底用用户家目录（~），而非 process.cwd()——默认工作区会话应在 ~ 下启动终端
+  return homedir();
 }
 
 /**
