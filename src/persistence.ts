@@ -39,6 +39,8 @@ export interface PersistedMeta {
   cwd: string;
   /** 创建时间戳（毫秒） */
   bornAt: number;
+  /** 所属 DSH 会话 id（用于按会话隔离终端；null = 不属于任何特定会话） */
+  ownerSessionId: string | null;
 }
 
 /** 会话记录——一个 PTY 会话的完整运行时状态 */
@@ -65,6 +67,8 @@ export interface SessionRecord {
   wsClients: Set<WebSocket>;
   /** 创建时间戳（毫秒） */
   bornAt: number;
+  /** 所属 DSH 会话 id（用于按会话隔离终端；null = 不属于任何特定会话） */
+  ownerSessionId: string | null;
   /** restart 时标记旧 pty 为 dead——旧 pty 的异步 onData/onExit 帧不再落盘 */
   dead?: boolean;
   /** 待落盘的日志块（合并写入用） */
@@ -124,6 +128,7 @@ export class SessionStore {
         cmdline: s.cmdline ?? null,
         cwd: s.cwd,
         bornAt: s.bornAt,
+        ownerSessionId: s.ownerSessionId ?? null,
       }));
       writeFileSync(this.metaPath, JSON.stringify(meta));
     } catch (error) {
@@ -303,6 +308,7 @@ export class SessionStore {
         exitDetail: 0,
         wsClients: new Set(),
         bornAt: m.bornAt ?? Date.now(),
+        ownerSessionId: typeof m.ownerSessionId === 'string' ? m.ownerSessionId : null,
         pending: '',
         flushTimer: null,
       };
