@@ -151,8 +151,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   /* —— 对话列几何测量 + scrollBody paddingBottom —— */
   const { geo } = usePanelGeometry(rootRef);
 
-  /* —— 统一状态管理（useReducer 封装 + 启动恢复） —— */
-  const { state, dispatch } = useTerminalState();
+  /* —— 统一状态管理（useReducer 封装 + 按会话过滤恢复） —— */
+  const { state, dispatch } = useTerminalState(sessionId);
   const { instances, groups, activeInstanceId, busy, bootReady } = state;
 
   const activeInstance = instances.find(t => t.id === activeInstanceId) ?? null;
