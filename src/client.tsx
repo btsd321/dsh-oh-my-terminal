@@ -26,6 +26,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 // 纯函数工具模块——esbuild 打包浏览器 bundle 时会把 shortcut.ts 内联进 client.js
 import { parseShortcut, matchesShortcut, type ShortcutSpec } from './shortcut.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('terminal-client');
 
 // —— dsh 客户端 slots 服务类型 ——
 // dsh-client-ui-slots 与 dsh-client-ui-renderer 是 dsh 浏览器 bundle 运行期注入的
@@ -829,7 +832,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
           setActiveId((lastLive ?? all[all.length - 1]).id);
         }
       } catch (err) {
-        console.error('[dsh-remote-terminal] 恢复会话失败:', err);
+        log.error('恢复会话失败', err);
       } finally {
         setBusy(false);
         setBootReady(true);
@@ -860,7 +863,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
         if (typeof cfg.toggleShortcut === 'string' && cfg.toggleShortcut.trim().length > 0) {
           const parsed = parseShortcut(cfg.toggleShortcut);
           if (parsed !== null) setShortcut(parsed);
-          else console.warn('[dsh-remote-terminal] 忽略无效的 toggleShortcut:', cfg.toggleShortcut);
+          else log.warn('忽略无效的 toggleShortcut', cfg.toggleShortcut);
         }
       } catch {
         /* 旧宿主无 /config——保持默认 */
@@ -917,7 +920,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
       }]);
       setActiveId(s.id);
     } catch (err) {
-      console.error('[dsh-remote-terminal] 新建 tab 失败:', err);
+      log.error('新建 tab 失败', err);
     } finally {
       setBusy(false);
     }
@@ -963,7 +966,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
       } : t)));
       setActiveId(s.id);
     } catch (err) {
-      console.error('[dsh-remote-terminal] 重启失败:', err);
+      log.error('重启失败', err);
     } finally {
       setBusy(false);
     }

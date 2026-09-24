@@ -357,6 +357,24 @@ get currentSession(): TerminalSession | undefined {
 5. **跨平台**：node-pty 自动按平台选 ConPTY（Windows）或 openpty（POSIX），不需要手动处理平台差异。
 6. **不落明文凭据**：日志和错误消息不打印密钥、口令内容。
 7. **终端数据绝不进日志**：pty 输出与 WebSocket 数据帧是用户会话内容，不写日志。
+8. **日志统一使用 `src/logger.ts` 的 `createLogger`**。不直接调用 `console.*`。
+   每个模块在文件顶部创建日志器：`const log = createLogger('模块名');`，模块名用
+   kebab-case 取自文件名（如 `'terminal-host'`、`'terminal-client'`）。级别语义：
+   debug（开发排查）、info（关键流程节点）、warn（可恢复异常/降级）、error（不可恢复失败）。
+   输出格式固定为 `[时间戳] [级别] [模块] 内容`，便于跨模块日志检索与过滤。
+   Node 环境下 `console.info/warn/error` 默认输出到 stderr；浏览器端输出到 DevTools
+   Console——两端 API 一致，无需环境判断。附加数据可选第二参数，自动 JSON 序列化。
+
+   ```typescript
+   import { createLogger } from './logger.js';
+   const log = createLogger('terminal-host');
+   log.info('创建会话', { id, cols, rows });
+   log.error('持久化失败', err);
+   ```
+
+   **高频路径日志纪律**：WebSocket 消息转发、pty onData 等周期性代码路径中，
+   只在状态变化时输出 info 日志；重复性诊断信息用 debug 级别。避免每条数据帧
+   都输出日志。
 
 ---
 

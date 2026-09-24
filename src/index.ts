@@ -44,6 +44,9 @@ import { spawn, type IPty } from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
 // 纯函数工具模块——宿主半与浏览器半共用（esbuild 打包浏览器 bundle 时内联）
 import { splitCommandLine, pickFirst } from './server-command.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('terminal-host');
 
 // —— 协议常量（从 protocol.ts 内联——独立插件不需要单独的协议文件）——
 
@@ -274,19 +277,6 @@ interface PersistedMeta {
   cwd: string;
   /** 创建时间戳（毫秒） */
   bornAt: number;
-}
-
-/**
- * 最小日志器：独立插件自包含，不依赖宿主 logger 模块。
- * 只记会话生命周期事件（创建/退出/重启/删除）与 id，终端数据绝不进日志。
- * 输出到 stderr（远端 dsh webserver 的标准错误流）。
- *
- * @param level - 级别标签
- * @param message - 日志内容（不含终端数据）
- */
-function log(level: 'info' | 'warn' | 'error', message: string): void {
-  const ts = new Date().toISOString();
-  process.stderr.write(`[${ts}] [${level}] [remote-terminal] ${message}\n`);
 }
 
 // —— 会话管理 ——
@@ -553,7 +543,7 @@ export function apply(ctx: Context): void {
       writeFileSync(META_PATH, JSON.stringify(meta));
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      log('error', `persist 元数据失败：${msg}`);
+      log.error( `persist 元数据失败：${msg}`);
     }
   }
 
@@ -576,7 +566,7 @@ export function apply(ctx: Context): void {
         appendFileSync(logPath(record.id), chunk);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        log('error', `日志写入失败（会话 ${record.id}）：${msg}`);
+        log.error( `日志写入失败（会话 ${record.id}）：${msg}`);
       }
     }, LOG_FLUSH_MS);
     // unref 避免定时器阻止进程退出
@@ -601,7 +591,7 @@ export function apply(ctx: Context): void {
       appendFileSync(logPath(record.id), chunk);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      log('error', `日志刷新失败（会话 ${record.id}）：${msg}`);
+      log.error( `日志刷新失败（会话 ${record.id}）：${msg}`);
     }
   }
 
@@ -791,7 +781,7 @@ export function apply(ctx: Context): void {
     registerSessionWs(id);
     persistMeta();
 
-    log('info', `创建会话 ${id}（${file}，${cols}x${rows}，cwd=${sessionCwd}）`);
+    log.info( `创建会话 ${id}（${file}，${cols}x${rows}，cwd=${sessionCwd}）`);
 
     // 4. onData → 追加 buffer（截断到 SCROLLBACK_CHARS）+ 落盘 + ws.send
     pty.onData((data) => {
@@ -811,7 +801,7 @@ export function apply(ctx: Context): void {
         flushLog(record);
         persistMeta();
       }
-      log('info', `会话 ${id} 已退出（code ${exitCode}）`);
+      log.info( `会话 ${id} 已退出（code ${exitCode}）`);
       for (const ws of record.wsClients) {
         try {
           ws.close(1000, 'session exited');
@@ -883,7 +873,7 @@ export function apply(ctx: Context): void {
       /* 无日志——忽略 */
     }
 
-    log('info', `重启会话 ${id}（继承 ${seed.length} 字符缓冲）`);
+    log.info( `重启会话 ${id}（继承 ${seed.length} 字符缓冲）`);
 
     // 创建新会话——有 cmdline 时重跑原命令，否则用裸 shell 文件
     const fresh = createSession({
@@ -990,7 +980,7 @@ export function apply(ctx: Context): void {
             upgradeDisposers.delete(id);
           }
           forgetSession(id);
-          log('info', `删除会话 ${id}`);
+          log.info( `删除会话 ${id}`);
           json(res, 200, { ok: true });
           return;
         }
@@ -1025,5 +1015,5 @@ export function apply(ctx: Context): void {
     };
   }, PKG_NAME + '.routes');
 
-  log('info', `宿主半已激活；路由前缀 ${ROUTE_PREFIX}，WS 前缀 ${WS_PREFIX}，快捷键 ${runtimeSettings.toggleShortcut}，shell ${runtimeSettings.shellCommand || '(自动)'}`);
+  log.info( `宿主半已激活；路由前缀 ${ROUTE_PREFIX}，WS 前缀 ${WS_PREFIX}，快捷键 ${runtimeSettings.toggleShortcut}，shell ${runtimeSettings.shellCommand || '(自动)'}`);
 }
