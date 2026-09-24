@@ -110,8 +110,12 @@ develop (稳定) ──merge──→ master ──tag──→ v0.x.y
 |------|---------|
 | `index` | src/index.ts |
 | `client` | src/client.tsx |
+| `persistence` | src/persistence.ts |
+| `platform` | src/platform.ts |
+| `constants` | src/constants.ts |
 | `server-command` | src/server-command.ts |
 | `shortcut` | src/shortcut.ts |
+| `logger` | src/logger.ts |
 | `scripts` | scripts/ |
 | `tests` | tests/ |
 

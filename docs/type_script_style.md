@@ -162,12 +162,15 @@ private assertAlive(): void {
 依赖必须单向向下，不允许反向或环形引用：
 
 ```
-宿主半        index.ts（入口 + 路由 + pty 管理 + WebSocket）
-浏览器半      client.tsx（xterm 面板 + 多 tab + 快捷键 + 拖拽）
-工具函数      server-command.ts、shortcut.ts
+宿主半        index.ts（入口 + 路由分发 + pty 生命周期 + WebSocket 升级 + settings 集成）
+持久化层      persistence.ts（SessionStore：日志落盘/清理、元数据读写、启动恢复）
+平台适配层    platform.ts（PlatformAdapter 接口 + POSIX/Windows 适配器）
+浏览器半      client.tsx（xterm 面板 + 多 tab + 快捷键 + 拖拽 + 剪贴板 + 自定义 Hooks）
+常量          constants.ts（协议/尺寸/快捷键/环境变量/文件名常量）
+工具函数      server-command.ts、shortcut.ts、logger.ts
 ```
 
-`index.ts` 依赖工具函数；`client.tsx` 独立运行在浏览器侧。两半经 WebSocket 通信，不直接 import。
+依赖方向：`index.ts` 依赖 `constants.ts`、`platform.ts`、`persistence.ts`、`server-command.ts`、`logger.ts`；`persistence.ts` 依赖 `constants.ts` 与 `logger.ts`；`client.tsx` 依赖 `shortcut.ts` 与 `logger.ts`，独立运行在浏览器侧。两半经 WebSocket 通信，不直接 import。
 
 ### 2.3 导出约定
 
