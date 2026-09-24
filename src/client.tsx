@@ -27,36 +27,35 @@
  * - `client/clipboard.ts` — 剪贴板纯函数（Async Clipboard API + legacy 回落）
  * - `client/dropdown.tsx` — +号旁下拉菜单组件
  * - `client/side-list.tsx` — 右侧终端列表面板组件
- * - `client/hooks.ts` — 自定义 Hooks（usePanelHeight/usePanelGeometry/useSessionRestore/usePanelShortcut/useTerminalTabs）
- * - 本文件保留：TermPane（xterm + WebSocket 核心）、RestartButton、TerminalPanel（组合壳）、CSS 注入、插件注册
+ * - `client/hooks.ts` — 自定义 Hooks（usePanelHeight/usePanelGeometry/useTerminalState/useConfig/useTerminalTabs）
+ * - `client/styles.ts` — CSS 常量、Campbell 主题、PANEL_CSS、injectStyles()
+ * - `client/term-pane.tsx` — TermPane（xterm + WebSocket 核心）、RestartButton
+ * - 本文件保留：TerminalPanel（组合壳）、插件注册
  */
 
 import * as React from 'react';
 import type { ReactElement } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
 // 子模块导入——esbuild 打包浏览器 bundle 时内联进 client.js
-import type {
-  TerminalInstance, TerminalGroup, TerminalType,
-  ConfigResponse, ConversationGeo,
-} from './client/types.js';
 import {
   TerminalGlyph14, TerminalGlyph12,
   ChevronUp14, ChevronDown14,
-  Refresh14, Close14, Plus12,
+  Close14, Plus12,
 } from './client/icons.js';
-import { createClipboardHandlers } from './client/clipboard.js';
 import { DropdownMenu } from './client/dropdown.js';
 import { SideList, instanceLabel } from './client/side-list.js';
 import {
   usePanelHeight, usePanelGeometry,
-  useSessionRestore, usePanelShortcut, useTerminalTabs,
+  useTerminalState, useConfig, useTerminalTabs,
 } from './client/hooks.js';
+import { injectStyles } from './client/styles.js';
+import { TermPane, RestartButton } from './client/term-pane.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('terminal-client');
+
+// —— 模块加载时幂等注入 CSS ——
+injectStyles();
 
 // —— dsh 客户端 slots 服务类型 ——
 // dsh-client-ui-slots 与 dsh-client-ui-renderer 是 dsh 浏览器 bundle 运行期注入的
@@ -88,160 +87,6 @@ interface ClientContext extends Context {
   slots: SlotsService;
 }
 
-// —— 常量 ——
-
-/** 宿主半路由前缀（与 index.ts 的 ROUTE_PREFIX 同源——独立插件直接用常量） */
-const PREFIX = '/api/dsh-remote-terminal';
-
-/** xterm.css <link> 标签的 id（幂等注入） */
-const XTERM_CSS_TAG = 'dsh-remote-terminal-xterm-css';
-
-/** 面板样式 <style> 标签的 id（幂等注入） */
-const STYLE_TAG = 'dsh-remote-terminal-styles';
-
-/** xterm 字号（像素）——TUI agent 输出密度与可读性的折中 */
-const TERM_FONT_SIZE = 12.5;
-
-/** xterm 行高倍数——紧凑但不挤行 */
-const TERM_LINE_HEIGHT = 1.25;
-
-/** xterm 滚动缓冲行数——agent 会话有大量工具输出，需要较长历史 */
-const TERM_SCROLLBACK = 10_000;
-
-/** 右侧终端列表默认宽度（像素） */
-const SIDE_LIST_DEFAULT_WIDTH = 160;
-
-/** 右侧终端列表最小宽度（像素） */
-const SIDE_LIST_MIN_WIDTH = 100;
-
-/** 右侧终端列表最大宽度（像素） */
-const SIDE_LIST_MAX_WIDTH = 300;
-
-/** 拆分终端最小宽度（像素） */
-const SPLIT_PANE_MIN_WIDTH = 80;
-
-// —— CSS 注入（模块级幂等） ——
-
-/* 模块加载时幂等注入 xterm.css 的 <link>：由宿主半的 GET /xterm.css 路由 serve */
-if (typeof document !== 'undefined' && document.getElementById(XTERM_CSS_TAG) === null) {
-  const link = document.createElement('link');
-  link.id = XTERM_CSS_TAG;
-  link.rel = 'stylesheet';
-  link.href = PREFIX + '/xterm.css';
-  document.head.appendChild(link);
-}
-
-/* VSCode 风格底部面板样式（DSH 设计令牌；终端表面恒深色）。
- * 定义了所有面板样式类，包括下拉菜单、拆分终端、右侧终端列表。 */
-const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:Inter,var(--dsw-font-family)}
-.dshTermBar{box-sizing:border-box;width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--dsw-specific-tip);border-top:1px solid var(--dsw-alias-border-l1);cursor:pointer;color:var(--dsw-alias-label-primary);text-align:left;user-select:none;-webkit-user-select:none}
-.dshTermBar:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
-.dshTermBarLead{color:var(--dsw-alias-label-tertiary);flex:none;place-items:center;display:grid}
-.dshTermBarTitle{min-width:0;flex:none;font-size:13px;font-weight:500;line-height:24px}
-.dshTermBarState{min-width:0;flex:auto;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dshTermBarActions{flex:none;align-items:center;gap:2px;display:flex}
-.dshTermBarAction{width:28px;height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:none;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
-.dshTermBarAction:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-.dshTermBarAction:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
-.dshTermBarAction:disabled{cursor:default;opacity:.45}
-.dshTermBarChevron{width:28px;height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
-.dshTermBarChevron:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermPanel{box-sizing:border-box;width:100%;display:flex;flex-direction:column;background:var(--dsw-specific-tip);border-top:1px solid var(--dsw-alias-border-l1);overflow:hidden;animation:dshTermIn .16s ease-out}
-@keyframes dshTermIn{from{transform:translateY(14px);opacity:.4}to{transform:none;opacity:1}}
-.dshTermResize{flex:none;height:6px;cursor:ns-resize;touch-action:none;position:relative}
-.dshTermResize:after{content:'';position:absolute;left:0;right:0;top:2px;height:2px;border-radius:2px;background:transparent;transition:background .15s}
-.dshTermResize:hover:after{background:var(--dsw-alias-interactive-bg-hover)}
-.dshTermHeader{flex:none;box-sizing:border-box;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
-.dshTermHeaderLead{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;margin-right:2px}
-.dshTermHeaderState{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}
-.dshTermHeaderActions{flex:none;display:flex;align-items:center;gap:2px;margin-left:auto}
-.dshTermNewWrap{display:inline-flex;align-items:center;flex:none;border-radius:7px}
-.dshTermNew{width:26px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
-.dshTermNew:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermNew:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
-.dshTermNew:disabled{cursor:default;opacity:.45}
-.dshTermNewSep{width:1px;height:16px;background:var(--dsw-alias-border-l1);flex:none}
-.dshTermDropdownArrow{width:16px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
-.dshTermDropdownArrow:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermDropdownArrow:disabled{cursor:default;opacity:.45}
-.dshTermDropdownWrap{position:relative;display:inline-flex;flex:none}
-.dshTermDropdownMenu{position:absolute;top:100%;right:0;z-index:100;min-width:160px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);white-space:nowrap}
-.dshTermDropdownItem{padding:5px 12px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);display:flex;align-items:center;gap:8px}
-.dshTermDropdownItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermDropdownSep{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1)}
-.dshTermCollapse{flex:none;display:grid;place-items:center;width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;padding:0}
-.dshTermCollapse:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermBodyWithList{display:flex;flex-direction:row;flex:auto;min-height:0;position:relative}
-.dshTermTerminalArea{flex:1;min-width:0;position:relative;background:#1e2128;box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
-.dshTermSplitGroup{display:flex;flex-direction:row;height:100%;width:100%}
-.dshTermSplitPane{flex:1 1 0;min-width:${SPLIT_PANE_MIN_WIDTH}px;position:relative;overflow:hidden}
-.dshTermSplitDivider{width:1px;background:var(--dsw-alias-border-l1);flex:none;cursor:col-resize}
-.dshTermPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:#1e2128}
-.dshTermPane.isActive{display:block}
-.dshTermEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8b90a0;font-family:Inter,var(--dsw-font-family);font-size:12px}
-.dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
-.dshTermEmptyBtn:hover{background:#343946}
-.dshTermSideList{width:${SIDE_LIST_DEFAULT_WIDTH}px;min-width:${SIDE_LIST_MIN_WIDTH}px;max-width:${SIDE_LIST_MAX_WIDTH}px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;background:var(--dsw-specific-tip);flex:none;overflow:hidden}
-.dshTermSideListHeader{flex:none;height:28px;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--dsw-alias-border-l1)}
-.dshTermSideListItems{flex:auto;overflow-y:auto;scrollbar-width:thin}
-.dshTermSideItem{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);position:relative;user-select:none;-webkit-user-select:none}
-.dshTermSideItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermSideItem.isActive{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-left:2px solid var(--dsw-alias-label-primary)}
-.dshTermSideItem.isExited{opacity:.5}
-.dshTermSideItem.isExited .dshTermSideItemLabel{text-decoration:line-through;text-decoration-thickness:1px}
-.dshTermSideItemIcon{flex:none;display:grid;place-items:center;opacity:.7}
-.dshTermSideItemPrefix{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,monospace;width:10px;text-align:center}
-.dshTermSideItemLabel{min-width:0;flex:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dshTermSideItemClose{width:18px;height:18px;border:none;background:transparent;color:inherit;border-radius:4px;display:grid;place-items:center;cursor:pointer;padding:0;opacity:0;flex:none}
-.dshTermSideItem:hover .dshTermSideItemClose{opacity:.65}
-.dshTermSideItemClose:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
-.dshTermSideItemInput{flex:1;min-width:0;height:20px;padding:0 4px;border:1px solid var(--dsw-alias-label-primary);border-radius:3px;background:var(--dsw-specific-tip);color:var(--dsw-alias-label-primary);font-size:12px;font-family:Inter,var(--dsw-font-family);outline:none}
-.dshTermContextMenu{position:fixed;z-index:200;min-width:120px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3)}
-.dshTermContextMenuItem{padding:4px 12px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
-.dshTermContextMenuItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-body.dshTermResizing{cursor:ns-resize!important;user-select:none!important;-webkit-user-select:none!important}`;
-
-/* 模块加载时幂等注入面板样式 <style> */
-if (typeof document !== 'undefined' && document.getElementById(STYLE_TAG) === null) {
-  const tag = document.createElement('style');
-  tag.id = STYLE_TAG;
-  tag.textContent = PANEL_CSS;
-  document.head.appendChild(tag);
-}
-
-// —— Campbell 暗色主题（对齐参考项目 TERM_THEME） ——
-
-/*
- * 终端表面恒深色：shell 输出颜色（ConPTY 索引、ls/git/PSReadLine）为深底设计——
- * 例如 ConPTY 对 prompt 发 fg-7（#e5e5e5），在浅色卡片上不可见。深色内嵌表面
- * （如聊天中的代码块）让所有 ANSI 颜色在两种 DSH 主题下都可读。
- */
-const TERM_THEME: Record<string, string> = {
-  foreground: '#d7dae0',
-  background: '#1e2128',
-  cursor: '#d7dae0',
-  cursorAccent: '#1e2128',
-  selectionBackground: '#3b4252aa',
-  /* Campbell 色相，提亮使每色在 #1e2128 上过 ~4:1 对比度
-   * （原版 Campbell 蓝/红/品红仅 2.0–2.7:1——不可读） */
-  black: '#0c0c0c',
-  red: '#e74856',
-  green: '#16c60c',
-  yellow: '#c19c00',
-  blue: '#3b78ff',
-  magenta: '#d64fa8',
-  cyan: '#3a96dd',
-  white: '#cccccc',
-  brightBlack: '#8a8a8a',
-  brightRed: '#ff6b6b',
-  brightGreen: '#2ee62e',
-  brightYellow: '#f9f1a5',
-  brightBlue: '#7aa2ff',
-  brightMagenta: '#f27fd8',
-  brightCyan: '#61d6d6',
-  brightWhite: '#f2f2f2',
-};
-
 // —— 插件注册壳 ——
 
 /** 插件包名（与 index.ts 的 PKG_NAME 同值） */
@@ -260,221 +105,6 @@ export function apply(ctx: ClientContext): void {
     { name: 'conversation.input.dock', id: 'terminal', order: 10 },
     TerminalPanel,
   ));
-}
-
-// —— TermPane 组件（单个终端面板） ——
-
-/** TermPane 的 props */
-interface TermPaneProps {
-  /** 本终端实例的元数据 */
-  instance: TerminalInstance;
-  /** 是否为当前活跃实例 */
-  active: boolean;
-  /** 会话退出回调（标记实例为 exited） */
-  onExit: (id: string) => void;
-}
-
-/**
- * 单个终端面板：拥有独立的 xterm Terminal + FitAddon + WebLinksAddon + WebSocket。
- *
- * 挂载时创建终端、连接 WebSocket；WebSocket onmessage 写入终端输出，
- * 终端 onData 回传 stdin。resize 经 onResize 发给宿主半。
- * 切实例只切显隐，不中断进程与滚动缓冲。
- *
- * @param props - 终端面板 props
- * @returns 终端容器 div
- */
-function TermPane(props: TermPaneProps): ReactElement {
-  const { instance, active, onExit } = props;
-  const { useEffect, useRef } = React;
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-
-  /* 挂载：创建终端、连接 WS */
-  useEffect(() => {
-    const host = hostRef.current;
-    if (host === null) return;
-    /*
-     * TUI agent 调优选项（codex / claude code）：
-     * - unicodeVersion "11"：现代 CJK/emoji 宽度表——中英混合 agent 输出不重叠错位
-     * - drawBoldTextInBrightColors false：粗体保持真实 ANSI 颜色
-     *   （true 会把粗红换成亮红——Claude Code 标题漂色）
-     * - scrollback 10000：agent 会话有大量工具输出
-     * - CJK 字体回退使中文不脱离等宽栈
-     */
-    /*
-     * unicodeVersion 是 xterm 的提议 API（类型定义未收录但运行时有效）——
-     * 用类型断言绕过类型检查（对齐参考项目 client-main.js 的用法）。设 "11"
-     * 启用现代 CJK/emoji 宽度表，使中英混合 agent 输出不重叠错位。
-     * 必须在构造时传入（init-only 选项），故用构造参数类型断言。
-     */
-    const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, Menlo, 'PingFang SC', 'Noto Sans Mono CJK SC', 'Microsoft YaHei', monospace",
-      fontSize: TERM_FONT_SIZE,
-      lineHeight: TERM_LINE_HEIGHT,
-      scrollback: TERM_SCROLLBACK,
-      drawBoldTextInBrightColors: false,
-      theme: TERM_THEME,
-      /* unicodeVersion 是运行时有效的提议属性，类型定义未收录——经断言补入 */
-      unicodeVersion: '11',
-    } as ConstructorParameters<typeof Terminal>[0]);
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    /* Ctrl+click（macOS Cmd+click）在新标签打开 http(s) 链接。
-     * 普通点击仍选中文本，不窃取选区。 */
-    term.loadAddon(new WebLinksAddon((_event: MouseEvent, uri: string) => {
-      window.open(uri, '_blank', 'noopener,noreferrer');
-    }));
-    term.open(host);
-    requestAnimationFrame(() => {
-      try {
-        fit.fit();
-      } catch { /* 零尺寸守卫 */ }
-    });
-    termRef.current = term;
-    fitRef.current = fit;
-
-    /*
-     * DSH 桌面端页面运行在自定义协议 dsh-app://app/ 下，window.location.host
-     * 返回 "app" 而非实际后端地址。DSH 通过 window.__DSH_TRANSPORT__.streamBaseUrl
-     * 注入真实后端 HTTP origin（如 http://127.0.0.1:19387），Gateway 的 WebSocket
-     * 也用此 origin。回退到 window.location.origin 兼容纯浏览器部署。
-     */
-    const transportGlobals = globalThis as { __DSH_TRANSPORT__?: { streamBaseUrl?: string } };
-    const wsOrigin = transportGlobals.__DSH_TRANSPORT__?.streamBaseUrl ?? window.location.origin;
-    const wsProto = wsOrigin.startsWith('https') ? 'wss:' : 'ws:';
-    const wsHost = wsOrigin.replace(/^https?:\/\//, '');
-    const wsUrl = wsProto + '//' + wsHost + PREFIX + '/ws/' + instance.id;
-    const ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
-      /* 挂载 effect 的 fit() 在 rAF 里跑，可能先于 socket 打开——此时 onResize 被
-       * 丢弃（readyState !== OPEN），PTY 停在生成默认值（80x24）。连接后重放当前
-       * 尺寸让 shell 按面板真实大小重绘——否则 PSReadLine 的「清除 prompt 下方行」
-       * 序列在矮面板里溢出，光标滞留底行。 */
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      }
-    };
-    ws.onmessage = (ev: MessageEvent) => {
-      term.write(ev.data as string);
-    };
-    ws.onclose = () => {
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-        onExit(instance.id);
-      }
-    };
-    ws.onerror = () => ws.close();
-    wsRef.current = ws;
-    term.onData((data: string) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(data);
-    });
-    term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
-
-    /* 剪贴板：选中复制、右键粘贴、Ctrl+Shift+C/V（双层降级逻辑见 client/clipboard.ts） */
-    const cb = createClipboardHandlers(term);
-    term.attachCustomKeyEventHandler(cb.onCustomKey);
-    if (term.element !== undefined) {
-      term.element.addEventListener('mouseup', cb.copySelection);
-      term.element.addEventListener('contextmenu', cb.pasteClipboard);
-    }
-
-    return () => {
-      if (term.element !== undefined) {
-        term.element.removeEventListener('mouseup', cb.copySelection);
-        term.element.removeEventListener('contextmenu', cb.pasteClipboard);
-      }
-      ws.onclose = null;
-      ws.close();
-      term.dispose();
-      termRef.current = null;
-      wsRef.current = null;
-    };
-  }, [instance.id, onExit]);
-
-  /* 激活：fit（尺寸可能已变）+ 聚焦 */
-  useEffect(() => {
-    if (!active) return;
-    const raf = requestAnimationFrame(() => {
-      try {
-        fitRef.current?.fit();
-      } catch { /* 未挂载 */ }
-      termRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [active]);
-
-  /* 随面板 resize（只有可见 pane 能 fit） */
-  useEffect(() => {
-    const host = hostRef.current;
-    if (host === null) return;
-    let raf = 0;
-    const ro = new ResizeObserver(() => {
-      if (!active) return;
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        try {
-          fitRef.current?.fit();
-        } catch { /* 未挂载 */ }
-      });
-    });
-    ro.observe(host);
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
-  }, [active]);
-
-  return React.createElement('div', {
-    className: 'dshTermPane' + (active ? ' isActive' : ''),
-    ref: hostRef,
-    onMouseDown: () => {
-      if (active) termRef.current?.focus();
-    },
-  });
-}
-
-// —— RestartButton 组件 ——
-
-/** RestartButton 的 props */
-interface RestartButtonProps {
-  /** 当前活跃实例（为 null 时不渲染按钮） */
-  active: TerminalInstance | null;
-  /** 操作进行中（禁用按钮） */
-  busy: boolean;
-  /** 重启回调 */
-  onRestart: () => void;
-}
-
-/**
- * 重启按钮：展开态头部与折叠态 bar 共用。
- *
- * 已退出实例的 title 提示「重启进程（保留标签位）」，活跃态提示「重启当前会话」。
- *
- * @param props - 重启按钮 props
- * @returns 按钮元素，无活跃实例时返回 null
- */
-function RestartButton(props: RestartButtonProps): ReactElement | null {
-  const { active, busy, onRestart } = props;
-  if (active === null) return null;
-  return React.createElement(
-    'button',
-    {
-      className: 'dshTermBarAction',
-      title: active.exited ? '重启进程（保留标签位）' : '重启当前会话',
-      'aria-label': '重启当前会话',
-      disabled: busy,
-      onClick: onRestart,
-    },
-    Refresh14(),
-  );
 }
 
 // —— TerminalPanel 主组件 ——
@@ -521,43 +151,22 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   /* —— 对话列几何测量 + scrollBody paddingBottom —— */
   const { geo } = usePanelGeometry(rootRef);
 
-  /* —— 会话恢复（挂载拉取 /sessions） + 实例/组/activeInstanceId/busy state —— */
-  const {
-    instances, setInstances,
-    groups, setGroups,
-    activeInstanceId, setActiveInstanceId,
-    busy, setBusy, bootReady,
-  } = useSessionRestore();
+  /* —— 统一状态管理（useReducer 封装 + 启动恢复） —— */
+  const { state, dispatch } = useTerminalState();
+  const { instances, groups, activeInstanceId, busy, bootReady } = state;
 
   const activeInstance = instances.find(t => t.id === activeInstanceId) ?? null;
   const activeGroup = groups.find(g => g.instances.some(i => i.id === activeInstanceId)) ?? null;
 
   /* —— 终端 CRUD（新建/关闭/重启/拆分/退出标记） —— */
   const { newTab, closeTab, restartActive, splitTerminal, onExit } = useTerminalTabs({
-    instances, setInstances,
-    groups, setGroups,
-    activeInstanceId, setActiveInstanceId,
-    setBusy, activeInstance, activeGroup,
+    state, dispatch,
+    activeInstance, activeGroup,
     workspaceCwd, sessionId,
   });
 
-  /* —— 快捷键（拉取 /config + 全局 keydown 监听切换） —— */
-  const { shortcutLabel } = usePanelShortcut(setOpen);
-
-  /* —— 终端种类列表（从 /config 获取） —— */
-  const [terminalTypes, setTerminalTypes] = useState<TerminalType[]>([]);
-  useEffect(() => {
-    void (async (): Promise<void> => {
-      try {
-        const cfg = await fetch(PREFIX + '/config').then(r => r.json()) as ConfigResponse;
-        if (Array.isArray(cfg.terminalTypes)) {
-          setTerminalTypes(cfg.terminalTypes);
-        }
-      } catch {
-        /* 旧宿主无 /config——保持空列表 */
-      }
-    })();
-  }, []);
+  /* —— 统一配置拉取（/config：快捷键 + 终端种类，单次请求） + 全局 keydown 监听 —— */
+  const { shortcutLabel, terminalTypes } = useConfig(setOpen);
 
   /** 首次打开已处理标记（关闭最后一个终端不自动新建，只有全新打开才建） */
   const openHandled = useRef(false);
@@ -591,24 +200,13 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
 
   /** 重命名终端实例（更新本地 title） */
   const handleRename = useCallback((instanceId: string, newName: string): void => {
-    setInstances(cur => cur.map(t => (t.id === instanceId ? { ...t, title: newName } : t)));
-    setGroups(cur => cur.map(g => ({
-      ...g,
-      instances: g.instances.map(t => (t.id === instanceId ? { ...t, title: newName } : t)),
-    })));
-  }, [setInstances, setGroups]);
+    dispatch({ type: 'RENAME_INSTANCE', id: instanceId, title: newName });
+  }, [dispatch]);
 
   /** 选择终端实例（从右侧列表点击） */
   const handleSelectInstance = useCallback((instanceId: string): void => {
-    setActiveInstanceId(instanceId);
-    /* 同时更新该实例所在组的活跃 id */
-    setGroups(cur => cur.map(g => {
-      if (g.instances.some(i => i.id === instanceId)) {
-        return { ...g, activeInstanceId: instanceId };
-      }
-      return g;
-    }));
-  }, [setActiveInstanceId, setGroups]);
+    dispatch({ type: 'SET_ACTIVE', id: instanceId });
+  }, [dispatch]);
 
   return React.createElement(
     'div',

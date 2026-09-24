@@ -100,3 +100,32 @@ export interface DeleteSessionResponse {
   /** 操作是否成功 */
   ok: boolean;
 }
+
+// —— useReducer 统一状态管理 ——
+
+/** 终端面板的统一状态（useReducer state） */
+export interface TerminalState {
+  /** 终端实例列表 */
+  instances: TerminalInstance[];
+  /** 终端组列表 */
+  groups: TerminalGroup[];
+  /** 当前活跃实例 id */
+  activeInstanceId: string | null;
+  /** 操作进行中（禁用按钮） */
+  busy: boolean;
+  /** 启动恢复完成（实例与组列表就绪） */
+  bootReady: boolean;
+}
+
+/** 终端状态 action 联合类型（reducer 处理的所有操作） */
+export type TerminalAction =
+  | { type: 'RESTORE'; instances: TerminalInstance[]; groups: TerminalGroup[]; activeInstanceId: string }
+  | { type: 'SET_BUSY'; busy: boolean }
+  | { type: 'SET_BOOT_READY' }
+  | { type: 'ADD_INSTANCE'; instance: TerminalInstance; group: TerminalGroup }
+  | { type: 'SPLIT_INSTANCE'; instance: TerminalInstance; groupId: string; afterInstanceId: string }
+  | { type: 'REMOVE_INSTANCE'; id: string }
+  | { type: 'RESTART_INSTANCE'; oldId: string; newInstance: TerminalInstance }
+  | { type: 'MARK_EXITED'; id: string }
+  | { type: 'SET_ACTIVE'; id: string }
+  | { type: 'RENAME_INSTANCE'; id: string; title: string };

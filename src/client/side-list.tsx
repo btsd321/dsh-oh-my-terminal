@@ -3,6 +3,9 @@
  * @description 右侧终端列表面板，垂直展示所有终端实例并按组显示树形拆分前缀。
  *              支持点击切换活跃终端、中键关闭、右键重命名、活跃高亮与已退出样式。
  *              通过 props 回调与父组件通信，内部仅管理重命名编辑态。
+ *
+ * 性能优化：
+ * - 扁平 items 数组经 useMemo 缓存，仅在 groups 引用变化时重新构建，避免每次渲染重复遍历
  */
 
 import * as React from 'react';
@@ -246,17 +249,20 @@ export function SideList(props: SideListProps): ReactElement {
     );
   };
 
-  // 展开所有组为扁平列表项（保留组内顺序与前缀信息）
-  const items: Array<{ inst: TerminalInstance; prefix: string }> = [];
-  for (const group of groups) {
-    const total = group.instances.length;
-    for (let i = 0; i < total; i++) {
-      items.push({
-        inst: group.instances[i],
-        prefix: treePrefix(i, total),
-      });
+  // 用 useMemo 缓存扁平列表项，仅在 groups 引用变化时重新构建
+  const items = React.useMemo(() => {
+    const result: Array<{ inst: TerminalInstance; prefix: string }> = [];
+    for (const group of groups) {
+      const total = group.instances.length;
+      for (let i = 0; i < total; i++) {
+        result.push({
+          inst: group.instances[i],
+          prefix: treePrefix(i, total),
+        });
+      }
     }
-  }
+    return result;
+  }, [groups]);
 
   return React.createElement(
     'div',
