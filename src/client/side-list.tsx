@@ -24,15 +24,19 @@ function prettyShell(s: string | undefined): string {
 }
 
 /**
- * 生成终端实例标签：服务端 title 形如 "pwsh.exe #3" → 显示 "pwsh 3"。
+ * 生成终端实例标签：取 shell 文件名去掉 .exe 后缀，不带序号。
+ *
+ * 服务端 title 形如 "pwsh.exe #3"，此处只显示 "pwsh"——与 VSCode 一致，
+ * 不附加数字后缀，多个同类型终端通过右侧列表区分。
  *
  * @param inst - 终端实例
- * @returns 显示标签字符串
+ * @returns 显示标签字符串（如 "pwsh"、"cmd"、"bash"）
  */
 export function instanceLabel(inst: TerminalInstance): string {
-  const m = /#(\d+)$/.exec(inst.title ?? '');
-  const base = prettyShell(inst.shell);
-  return m === null ? base : base + ' ' + m[1];
+  /* 优先使用用户自定义的 title（重命名后 title 不再是 "xxx.exe #N" 格式） */
+  const title = inst.title ?? '';
+  if (title.length > 0 && !/#\d+$/.test(title)) return title;
+  return prettyShell(inst.shell);
 }
 
 // —— SideList 组件 ——
