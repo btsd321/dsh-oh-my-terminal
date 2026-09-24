@@ -64,8 +64,12 @@ const log = createLogger('terminal-host');
 
 // —— 原生绑定懒加载 ——
 
-/** 终端操作错误：保留错误码，便于调用方区分失败原因 */
-export class TerminalError extends Error {
+/**
+ * 终端操作错误：保留错误码，便于路由层区分失败原因（如 PTY_UNAVAILABLE）。
+ * 仅模块内部使用——loadPty 抛出、路由层 catch 后转 HTTP 响应，无外部消费者，故不导出
+ * （type_script_style §2.3：内部辅助不导出，避免无谓扩大插件公开 API 面）。
+ */
+class TerminalError extends Error {
   constructor(message: string, readonly code?: string) {
     super(message);
     this.name = 'TerminalError';
@@ -767,7 +771,11 @@ export function apply(ctx: Context): void {
         json(res, 404, { error: 'not found' });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        json(res, 500, { error: msg });
+        // TerminalError 携带错误码（如 PTY_UNAVAILABLE）——一并返回，便于前端区分
+        // 「原生绑定不可用」与其它 500 并针对性提示（如引导重装插件）。TerminalError
+        // 未导出，但同模块内仍可 instanceof 判断并读取其 code 字段。
+        const code = error instanceof TerminalError ? error.code : undefined;
+        json(res, 500, { error: msg, ...(code !== undefined ? { code } : {}) });
       }
     },
   });
