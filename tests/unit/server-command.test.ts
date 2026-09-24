@@ -1,12 +1,12 @@
 /**
  * @file server-command.ts 单元测试
  * @description 覆盖 splitCommandLine 的基本功能、引号处理、多空格、边界情况，
- *              以及 pickFirst 的回退链选择逻辑。
+ *              以及 firstNonEmpty 的回退链选择逻辑。
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitCommandLine, pickFirst } from '../../src/server-command.js';
+import { splitCommandLine, firstNonEmpty } from '../../src/server-command.js';
 
 describe('splitCommandLine', () => {
   // ─── 基本功能 ───────────────────────────────────────────────
@@ -124,27 +124,27 @@ describe('splitCommandLine', () => {
   });
 });
 
-describe('pickFirst', () => {
+describe('firstNonEmpty', () => {
   // ─── 基本功能 ───────────────────────────────────────────────
   describe('基本功能', () => {
     it('返回第一个非空字符串', () => {
-      assert.equal(pickFirst('a', 'b', 'c'), 'a');
+      assert.equal(firstNonEmpty('a', 'b', 'c'), 'a');
     });
 
     it('跳过 undefined', () => {
-      assert.equal(pickFirst(undefined, 'b', 'c'), 'b');
+      assert.equal(firstNonEmpty(undefined, 'b', 'c'), 'b');
     });
 
     it('跳过空字符串', () => {
-      assert.equal(pickFirst('', 'b', 'c'), 'b');
+      assert.equal(firstNonEmpty('', 'b', 'c'), 'b');
     });
 
     it('跳过全空白字符串', () => {
-      assert.equal(pickFirst('   ', 'b'), 'b');
+      assert.equal(firstNonEmpty('   ', 'b'), 'b');
     });
 
     it('跳过制表符字符串', () => {
-      assert.equal(pickFirst('\t', 'b'), 'b');
+      assert.equal(firstNonEmpty('\t', 'b'), 'b');
     });
   });
 
@@ -154,35 +154,35 @@ describe('pickFirst', () => {
       const env = undefined;
       const settings = '';
       const def = '/bin/bash';
-      assert.equal(pickFirst(env, settings, def), '/bin/bash');
+      assert.equal(firstNonEmpty(env, settings, def), '/bin/bash');
     });
 
     it('env 优先于 settings', () => {
       const env = 'zsh';
       const settings = 'bash';
-      assert.equal(pickFirst(env, settings), 'zsh');
+      assert.equal(firstNonEmpty(env, settings), 'zsh');
     });
 
     it('settings 优先于默认值', () => {
       const env = undefined;
       const settings = 'bash -l';
-      assert.equal(pickFirst(env, settings), 'bash -l');
+      assert.equal(firstNonEmpty(env, settings), 'bash -l');
     });
 
     it('全 undefined 返回 undefined', () => {
-      assert.equal(pickFirst(undefined, undefined), undefined);
+      assert.equal(firstNonEmpty(undefined, undefined), undefined);
     });
 
     it('全空字符串返回 undefined', () => {
-      assert.equal(pickFirst('', '', ''), undefined);
+      assert.equal(firstNonEmpty('', '', ''), undefined);
     });
 
     it('无参数返回 undefined', () => {
-      assert.equal(pickFirst(), undefined);
+      assert.equal(firstNonEmpty(), undefined);
     });
 
     it('含空白但非全空白的字符串被选中', () => {
-      assert.equal(pickFirst(' a '), ' a ');
+      assert.equal(firstNonEmpty(' a '), ' a ');
     });
   });
 });

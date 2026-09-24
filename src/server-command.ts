@@ -47,7 +47,7 @@ export function splitCommandLine(input: string): string[] {
  * @param values - 候选值列表（可能含 undefined / 空串 / 全空白串）
  * @returns 第一个非空非空白字符串；全空时 undefined
  */
-export function pickFirst(...values: (string | undefined)[]): string | undefined {
+export function firstNonEmpty(...values: (string | undefined)[]): string | undefined {
   for (const value of values) {
     if (typeof value === 'string' && value.trim().length > 0) return value;
   }
