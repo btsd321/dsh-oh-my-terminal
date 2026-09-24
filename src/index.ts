@@ -39,8 +39,9 @@ import type { Context } from '@deepseek-ai/cordis';
 // 用值导入——settings schema 注册需要运行时调用 z.string()/z.object()
 import z from '@deepseek-ai/schemastery';
 // 独立插件有真实 node_modules——直接 import node-pty 与 ws，无需 declare module 占位
+// WebSocket 需作为值导入：ws.readyState === WebSocket.OPEN 用到其静态常量
 import { spawn, type IPty } from 'node-pty';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 // 纯函数工具模块——宿主半与浏览器半共用（esbuild 打包浏览器 bundle 时内联）
 import { splitCommandLine, pickFirst } from './server-command.js';
 
