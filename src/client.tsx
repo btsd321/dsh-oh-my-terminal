@@ -154,7 +154,7 @@ const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:I
 .dshTermHeader{flex:none;box-sizing:border-box;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
 .dshTermHeaderLead{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;margin-right:2px}
 .dshTermHeaderState{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}
-.dshTermNewWrap{display:inline-flex;align-items:center;flex:none;border-radius:7px;overflow:hidden}
+.dshTermNewWrap{display:inline-flex;align-items:center;flex:none;border-radius:7px}
 .dshTermNew{width:26px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
 .dshTermNew:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshTermNew:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
@@ -719,13 +719,15 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
               )
               : null,
           ),
-          /* 右侧终端列表 */
-          React.createElement(SideList, {
-            groups,
-            activeInstanceId,
-            onSelect: handleSelectInstance,
-            onClose: closeTab,
-          }),
+          /* 右侧终端列表（仅多于一个终端时显示） */
+          instances.length > 1
+            ? React.createElement(SideList, {
+              groups,
+              activeInstanceId,
+              onSelect: handleSelectInstance,
+              onClose: closeTab,
+            })
+            : null,
         ),
       )
       : React.createElement(
@@ -746,8 +748,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
           },
         },
         React.createElement('span', { className: 'dshTermBarLead', 'aria-hidden': true }, TerminalGlyph14()),
-        React.createElement('span', { className: 'dshTermBarTitle' }, '终端' + (instances.length > 1 ? ' · ' + instances.length : '')),
-        React.createElement('span', { className: 'dshTermBarState' }, stateLabel),
+        React.createElement('span', { className: 'dshTermBarTitle' }, '终端'),
+        React.createElement('span', { className: 'dshTermBarState' }, instances.length > 0 ? instances.length + ' 个终端' : '无会话'),
         React.createElement(
           'span',
           { className: 'dshTermBarActions', onClick: (e: React.MouseEvent) => e.stopPropagation() },
