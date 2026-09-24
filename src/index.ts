@@ -169,41 +169,105 @@ const META_FILE = 'sessions.json';
 /** 滚动缓冲日志子目录名 */
 const LOG_SUBDIR = 'logs';
 
-// —— 平台 shell 探测 ——
+// —— 平台适配器 ——
 
-/**
- * 探测平台默认 shell 命令（POSIX: $SHELL || /bin/bash）。
- * 远端只支持 POSIX，不处理 Windows。
- *
- * @returns shell 可执行文件路径
- */
-function detectDefaultShell(): string {
-  return process.env.SHELL ?? '/bin/bash';
+/** spawn 参数：node-pty spawn(file, args, opts) 的 file 和 args */
+interface SpawnArgs {
+  /** 可执行文件路径 */
+  file: string;
+  /** 命令行参数（不含 file 本身） */
+  args: string[];
 }
 
-// —— 会话环境构建 ——
-
 /**
- * 构建 PTY 子进程环境：TERM=xterm-256color, COLORTERM=truecolor, LANG/LC_ALL=en_US.UTF-8。
- * 已存在的非空用户值优先——只补缺失槽位。
+ * 平台适配器接口——封装所有 OS 差异，业务逻辑不关心平台。
  *
- * @returns PTY 子进程环境变量字典
+ * 新增平台只需实现此接口并在 PLATFORM_ADAPTERS 注册，不需要修改 resolveSpawn /
+ * platform.buildSessionEnv / platform.builtinTerminalTypes 等业务代码。
  */
-function buildSessionEnv(): Record<string, string> {
-  const base = process.env as Record<string, string | undefined>;
-  const pick = (key: string, fallback: string): string => {
-    const v = base[key];
-    return v === undefined || v === '' ? fallback : v;
-  };
-  return {
-    ...process.env,
-    TERM: 'xterm-256color',
-    COLORTERM: pick('COLORTERM', 'truecolor'),
-    PYTHONIOENCODING: pick('PYTHONIOENCODING', 'utf-8'),
-    LANG: pick('LANG', 'en_US.UTF-8'),
-    LC_ALL: pick('LC_ALL', 'en_US.UTF-8'),
-  } as Record<string, string>;
+interface PlatformAdapter {
+  /** 探测平台默认 shell 可执行文件路径 */
+  detectDefaultShell(): string;
+  /**
+   * 为裸 shell 文件构建 spawn 参数（含交互标志等平台特定参数）。
+   * @param file - shell 可执行文件路径
+   */
+  buildBareSpawnArgs(file: string): SpawnArgs;
+  /** 构建 PTY 子进程环境变量（在 process.env 基础上补充/覆盖平台特定变量） */
+  buildSessionEnv(): Record<string, string>;
+  /** node-pty spawn 的 name 参数（终端类型描述符） */
+  ptyName: string;
+  /** 内置终端种类列表（/config 返回给浏览器半） */
+  builtinTerminalTypes: TerminalType[];
 }
+
+// —— POSIX 适配器 ——
+
+const posixAdapter: PlatformAdapter = {
+  detectDefaultShell(): string {
+    return process.env.SHELL ?? '/bin/bash';
+  },
+  buildBareSpawnArgs(file: string): SpawnArgs {
+    // POSIX shell 需要 -i 进入交互模式
+    return { file, args: ['-i'] };
+  },
+  buildSessionEnv(): Record<string, string> {
+    const pick = (key: string, fallback: string): string => {
+      const v = process.env[key];
+      return v === undefined || v === '' ? fallback : v;
+    };
+    return {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: pick('COLORTERM', 'truecolor'),
+      PYTHONIOENCODING: pick('PYTHONIOENCODING', 'utf-8'),
+      LANG: pick('LANG', 'en_US.UTF-8'),
+      LC_ALL: pick('LC_ALL', 'en_US.UTF-8'),
+    } as Record<string, string>;
+  },
+  ptyName: 'xterm-256color',
+  builtinTerminalTypes: [
+    { id: 'default', label: '默认 Shell', command: '' },
+    { id: 'bash', label: 'Bash', command: 'bash -l' },
+    { id: 'zsh', label: 'Zsh', command: 'zsh -l' },
+  ],
+};
+
+// —— Windows 适配器 ——
+
+const win32Adapter: PlatformAdapter = {
+  detectDefaultShell(): string {
+    // COMSPEC 是 Windows 系统环境变量，指向 cmd.exe
+    const comspec = process.env.COMSPEC;
+    if (typeof comspec === 'string' && comspec.length > 0) return comspec;
+    return 'cmd.exe';
+  },
+  buildBareSpawnArgs(file: string): SpawnArgs {
+    // Windows shell（cmd.exe / pwsh.exe / powershell.exe）默认就是交互模式，无需额外参数
+    return { file, args: [] };
+  },
+  buildSessionEnv(): Record<string, string> {
+    // Windows ConPTY 不需要 TERM/COLORTERM/LANG/LC_ALL 等 POSIX 变量
+    // 只补充 PYTHONIOENCODING 确保 Python 输出 UTF-8
+    const pick = (key: string, fallback: string): string => {
+      const v = process.env[key];
+      return v === undefined || v === '' ? fallback : v;
+    };
+    return {
+      ...process.env,
+      PYTHONIOENCODING: pick('PYTHONIOENCODING', 'utf-8'),
+    } as Record<string, string>;
+  },
+  ptyName: 'xterm-256color',
+  builtinTerminalTypes: [
+    { id: 'default', label: '默认 Shell', command: '' },
+    { id: 'pwsh', label: 'PowerShell', command: 'pwsh' },
+    { id: 'cmd', label: 'CMD', command: 'cmd' },
+  ],
+};
+
+/** 按 process.platform 选择适配器——未知平台回落 POSIX */
+const platform: PlatformAdapter = process.platform === 'win32' ? win32Adapter : posixAdapter;
 
 // —— 会话 cwd 解析 ——
 
@@ -254,12 +318,7 @@ interface TerminalType {
   command: string;
 }
 
-/** 内置终端种类列表（未来可从 settings 扩展） */
-const BUILTIN_TERMINAL_TYPES: TerminalType[] = [
-  { id: 'default', label: '默认 Shell', command: '' },
-  { id: 'bash', label: 'Bash', command: 'bash -l' },
-  { id: 'zsh', label: 'Zsh', command: 'zsh -l' },
-];
+/** 内置终端种类列表——由平台适配器提供，未来可从 settings 扩展 */
 
 // —— 会话持久化 ——
 
@@ -398,15 +457,15 @@ function makeId(): string {
 }
 
 /**
- * 解析 spawn 参数：从 shell/cmdline/settings 解析出 (file, argv, cmdline)。
+ * 解析 spawn 参数：从 shell/cmdline/settings 解析出 (file, args, cmdline)。
  *
  * 来源优先级（高到低）：
  * 1. shell——裸 shell 文件，per-request 覆盖（legacy API）
  * 2. cmdline——完整命令行（restart 重跑原命令）
  * 3. runtimeSettings.shellCommand——用户配置的命令行
- * 4. 平台默认（$SHELL || /bin/bash）
+ * 4. 平台默认（经 platform.detectDefaultShell()）
  *
- * 完整命令行原样使用（不注入 -i/-l）；裸 shell 文件保留 legacy 标志行为。
+ * 完整命令行原样使用（不注入平台特定标志）；裸 shell 文件经平台适配器构建参数。
  *
  * @param shell - 裸 shell 文件覆盖
  * @param cmdline - 完整命令行覆盖
@@ -417,24 +476,24 @@ function resolveSpawn(
   shell: string | undefined,
   cmdline: string | undefined,
   runtimeShellCommand: string,
-): { file: string; argv: string[]; cmdline: string | null } {
-  // 1. 裸 shell 文件覆盖
+): { file: string; args: string[]; cmdline: string | null } {
+  // 1. 裸 shell 文件覆盖——经平台适配器构建参数（POSIX 加 -i，Windows 不加）
   const bare = pickFirst(shell) ?? null;
   if (bare !== null) {
-    const argv = bare.endsWith('cmd.exe') ? [bare] : [bare, '-i'];
-    return { file: bare, argv, cmdline: null };
+    const { file, args } = platform.buildBareSpawnArgs(bare);
+    return { file, args, cmdline: null };
   }
-  // 2. 完整命令行（per-request 覆盖 > settings 配置）
+  // 2. 完整命令行（per-request 覆盖 > settings 配置）——原样拆分，不注入平台标志
   const full = pickFirst(cmdline, runtimeShellCommand) ?? null;
   if (full !== null) {
     const parts = splitCommandLine(full);
-    const file = parts[0] ?? detectDefaultShell();
-    return { file, argv: [file, ...parts.slice(1)], cmdline: full };
+    const file = parts[0] ?? platform.detectDefaultShell();
+    return { file, args: parts.slice(1), cmdline: full };
   }
-  // 3. 平台默认
-  const file = detectDefaultShell();
-  const argv = file.endsWith('cmd.exe') ? [file] : [file, '-i'];
-  return { file, argv, cmdline: null };
+  // 3. 平台默认——经平台适配器构建参数
+  const file = platform.detectDefaultShell();
+  const { args } = platform.buildBareSpawnArgs(file);
+  return { file, args, cmdline: null };
 }
 
 // —— cordis 插件导出 ——
@@ -736,19 +795,19 @@ export function apply(ctx: Context): void {
   }): SessionRecord {
     const cols = options.cols ?? DEFAULT_COLS;
     const rows = options.rows ?? DEFAULT_ROWS;
-    const { file, argv, cmdline: effectiveCmdline } = resolveSpawn(
+    const { file, args, cmdline: effectiveCmdline } = resolveSpawn(
       options.shell, options.cmdline, runtimeSettings.shellCommand,
     );
     const id = makeId();
     const sessionCwd = resolveSessionCwd(options.cwd, options.sessionId, workspaceRegistry);
 
     // 1. spawn PTY——node-pty 返回 IPty 实例
-    const pty = spawn(file, argv.slice(1), {
-      name: 'xterm-256color',
+    const pty = spawn(file, args, {
+      name: platform.ptyName,
       cols,
       rows,
       cwd: sessionCwd,
-      env: buildSessionEnv(),
+      env: platform.buildSessionEnv(),
     });
 
     // 2. 登记会话记录
@@ -757,7 +816,7 @@ export function apply(ctx: Context): void {
       pty,
       shell: file,
       cmdline: effectiveCmdline,
-      title: `${file} #${sessionCounter}`,
+      title: `${file.replace(/^.*[/\\]/, '')} #${sessionCounter}`,
       cwd: sessionCwd,
       // seed: restart 继承的滚动缓冲——连接时回放 + 预写入新会话日志
       buffer: (options.seed ?? '').slice(-SCROLLBACK_CHARS),
@@ -938,7 +997,7 @@ export function apply(ctx: Context): void {
           json(res, 200, {
             toggleShortcut: runtimeSettings.toggleShortcut,
             shellCommand: runtimeSettings.shellCommand,
-            terminalTypes: BUILTIN_TERMINAL_TYPES,
+            terminalTypes: platform.builtinTerminalTypes,
             protocolVersion: PROTOCOL_VERSION,
           });
           return;
