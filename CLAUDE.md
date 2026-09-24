@@ -17,14 +17,16 @@ AI agent 或人类开发者在动手修改任何代码或文档之前，**必须
 
 ## 这是什么
 
-`dsh-oh-my-terminal` 是 DSH Web GUI 的底部终端面板插件，基于 `@lydell/node-pty` 提供多标签交互式终端（Windows ConPTY / POSIX openpty），经 WebSocket 与浏览器端的 xterm.js 前端通信。用户通过 `dsh plugin --profile web add dsh-oh-my-terminal` 安装。
+`dsh-oh-my-terminal` 是 DSH Web GUI 的底部终端面板插件，基于 `@lydell/node-pty` 提供多终端交互式面板（Windows ConPTY / POSIX openpty），经 WebSocket 与浏览器端的 xterm.js 前端通信。用户通过 `dsh plugin --profile web add dsh-oh-my-terminal` 安装。
+
+VSCode 风格界面：+号旁下拉菜单（新建/拆分/按种类新建）、拆分终端（同组水平并排）、右侧终端列表（替代水平 tab 栏）、右键重命名。
 
 架构分为两半加共享工具层：
 
-- **宿主半**（`src/index.ts`）：Cordis 插件入口，注册路由、管理 `@lydell/node-pty` 进程、WebSocket 升级与数据转发、settings 集成
-- **浏览器半**（`src/client.tsx`）：React 组件，xterm.js 底部面板，多 tab 管理、快捷键、拖拽调高、剪贴板
+- **宿主半**（`src/index.ts` + `src/routes.ts` + `src/ws-handler.ts`）：Cordis 插件入口、HTTP 路由分发、WebSocket 升级与数据转发、settings 集成、会话生命周期管理
+- **浏览器半**（`src/client.tsx` + `src/client/`）：React 组件，xterm.js 底部面板，useReducer 统一状态管理、拆分终端、右侧列表、下拉菜单、快捷键、拖拽调高、剪贴板
 - **持久化层**（`src/persistence.ts`）：`SessionStore` 封装会话日志落盘/清理、元数据读写、启动恢复
-- **平台适配层**（`src/platform.ts`）：`PlatformAdapter` 接口与 POSIX/Windows 适配器，封装 OS 差异
+- **平台适配层**（`src/platform.ts`）：`PlatformAdapter` 接口与 POSIX/Windows 适配器，封装 OS 差异，动态探测 Git Bash 与默认 shell
 - **常量**（`src/constants.ts`）：协议前缀、尺寸约束、快捷键默认值、环境变量名等具名常量
 - **工具函数**（`src/server-command.ts`、`src/shortcut.ts`、`src/logger.ts`）：命令行解析、快捷键解析、统一日志
 
@@ -51,21 +53,57 @@ pnpm exec tsx --test tests/unit/*.test.ts
 
 ```
 src/
-├── index.ts           # 宿主半入口（cordis 插件：apply/inject/name + 路由分发 + pty 生命周期 + WebSocket 升级 + settings 集成）
-├── client.tsx          # 浏览器半入口（xterm 底部面板 + 多 tab + 快捷键 + 拖拽调高 + 剪贴板 + 自定义 Hooks）
-├── persistence.ts      # 会话持久化层（SessionStore：日志落盘/清理、元数据读写、启动恢复）
-├── platform.ts         # 平台适配层（PlatformAdapter 接口 + POSIX/Windows 适配器 + envPick）
-├── constants.ts        # 协议/尺寸/快捷键/环境变量/文件名常量
-├── server-command.ts   # 命令行解析工具（shell 命令拆分与转义）
-├── shortcut.ts         # 快捷键解析工具（toggle 快捷键字符串 → KeyboardEvent 匹配）
-└── logger.ts           # 统一日志工具（createLogger：结构化 [时间戳][级别][模块] 内容）
+├── index.ts                # 宿主半入口（cordis 插件壳 + settings 集成 + 会话生命周期 + loadPty 懒加载）
+├── routes.ts               # HTTP 路由处理器工厂（createRouteHandler + 辅助函数）
+├── ws-handler.ts           # WebSocket 处理器工厂（createWsHandlers + WebServer 类型导出）
+├── client.tsx              # 浏览器半入口（TerminalPanel 组合壳 + 插件注册 + injectStyles 调用）
+├── client/
+│   ├── types.ts            # 共享类型定义（TerminalInstance, TerminalGroup, TerminalState, TerminalAction, API 响应）
+│   ├── hooks.ts            # 自定义 Hooks（terminalReducer + useTerminalState + useConfig + usePanelHeight + usePanelGeometry + useTerminalTabs）
+│   ├── term-pane.tsx       # TermPane 组件（xterm + WebSocket + resize）+ RestartButton 组件
+│   ├── styles.ts           # CSS 样式常量（PANEL_CSS）+ Campbell 暗色主题 + xterm 调优常量 + injectStyles()
+│   ├── dropdown.tsx        # +号旁下拉菜单组件（新建/拆分/按种类新建）
+│   ├── side-list.tsx       # 右侧终端列表面板（树形前缀 + 右键重命名 + useMemo 缓存）
+│   ├── icons.tsx           # SVG 图标组件集合（10 个纯函数）
+│   └── clipboard.ts        # 剪贴板纯函数（Async Clipboard API + legacy 双层降级）
+├── persistence.ts          # 会话持久化层（SessionStore：日志落盘/清理、元数据读写、启动恢复）
+├── platform.ts             # 平台适配层（PlatformAdapter 接口 + POSIX/Windows 适配器 + Git Bash 探测 + 默认 shell 探测）
+├── constants.ts            # 协议/尺寸/快捷键/环境变量/文件名常量
+├── server-command.ts       # 命令行解析工具（shell 命令拆分与转义）
+├── shortcut.ts             # 快捷键解析工具（toggle 快捷键字符串 → KeyboardEvent 匹配）
+└── logger.ts               # 统一日志工具（createLogger：结构化 [时间戳][级别][模块] 内容）
 ```
 
-依赖方向：`index.ts` 依赖 `constants.ts`、`platform.ts`、`persistence.ts`、`server-command.ts`、`logger.ts`；`persistence.ts` 依赖 `constants.ts` 与 `logger.ts`；`client.tsx` 依赖 `shortcut.ts` 与 `logger.ts`，独立运行在浏览器侧。两半经 WebSocket 通信，路由前缀 `/api/dsh-remote-terminal`。`@lydell/node-pty` 是外部原生依赖，不在这条内部依赖链上：宿主半只在首次创建会话时对它 `await import()`，不写顶层静态导入。
+### 依赖方向
+
+```
+宿主半：
+  index.ts → routes.ts → constants.ts, platform.ts, persistence.ts, server-command.ts, logger.ts
+  index.ts → ws-handler.ts → constants.ts, persistence.ts
+  index.ts → constants.ts, platform.ts, persistence.ts, logger.ts
+  persistence.ts → constants.ts, logger.ts
+
+浏览器半：
+  client.tsx → client/types.ts, client/icons.tsx, client/clipboard.ts,
+               client/dropdown.tsx, client/side-list.tsx, client/hooks.ts,
+               client/styles.ts, client/term-pane.tsx, logger.ts
+  client/hooks.ts → client/types.ts, shortcut.ts, logger.ts
+  client/dropdown.tsx → client/types.ts, client/icons.tsx
+  client/side-list.tsx → client/types.ts, client/icons.tsx
+  client/term-pane.tsx → client/types.ts, client/clipboard.ts, client/icons.tsx, client/styles.ts
+
+两半经 WebSocket 通信，路由前缀 /api/dsh-remote-terminal，不直接 import。
+@lydell/node-pty 是外部原生依赖，宿主半只在首次创建会话时 await import()。
+```
+
+### 状态管理
+
+浏览器半使用 `useReducer` 统一管理终端状态（`TerminalState`），消除原先 instances/groups/activeInstanceId 三轨独立 state 的同步负担。所有 CRUD 操作通过 `dispatch(TerminalAction)` 提交，reducer 是纯函数。`/config` 只拉取一次（`useConfig` Hook），同时获取快捷键配置和终端种类列表。
 
 ## 经验教训与硬约束
 
 - **插件形态**：宿主产物必须 ESM；命令名匹配 `/^[a-z][a-z0-9_-]*$/`；defineTool 的 object 节点必须写 `additionalProperties`；路由只走已鉴权通道
+- **ESM 合规**：所有源文件是 ESM 模块，**禁止使用 `require()`**——必须用顶层 `import` 或动态 `await import()`。esbuild 会把 `require()` 转成 `__require()` 包装，在 DSH 的 Electron 进程中可能失败（曾导致 Git Bash 探测静默失败）
 - **@lydell/node-pty**：`spawn` 时 `cwd` 必须存在且可访问，否则进程立即退出；Windows 上用 ConPTY，POSIX 上用 openpty，不要手动 `fork`
 - **原生绑定懒加载**：宿主半不写顶层静态 `import { spawn } from '@lydell/node-pty'`。ESM 的异常发生在模块求值期，原生绑定一旦加载失败，整个 `lib/index.js` 就变成不可导入、dsh 报 `failed to import`，插件连 `apply` 都执行不到；改成首次创建会话时 `await import()`，失败被收敛在会话创建这一步，错误消息可读，插件其余路由仍可用
 - **精确钉 `@lydell/node-pty@1.1.0`**：它是 microsoft/node-pty 的预编译分发版（API 同源），N-API 产物一份二进制同时覆盖 ABI 127（Node 22）与 ABI 137（Node 24）；但该包 `dist-tags.latest` 指向 1.2.0-beta 系列，所以必须精确写 `1.1.0`，不能用 `^` 或 `latest`
@@ -73,6 +111,8 @@ src/
 - **WebSocket**：socket error 必须在 destroy 之前挂 error 监听器，未处理 error 事件会直接掀翻进程；关闭时要成对清理 `data`/`close`/`error` 监听器
 - **xterm.css**：构建时从 `node_modules/@xterm/xterm/css/xterm.css` 复制到 `lib/xterm.css`，由宿主半 serve
 - **终端数据绝不进日志**：pty 输出与 WebSocket 数据帧是用户会话内容，不写日志
+- **CSS overflow:hidden 陷阱**：包含 `position:absolute` 浮层（如下拉菜单）的容器不能设 `overflow:hidden`，否则浮层被裁剪不可见
+- **单文件行数阈值**：建议 <600 行。超过时按职责边界拆分到子模块，不要按"太长了"随意切半
 
 ## 约束
 
