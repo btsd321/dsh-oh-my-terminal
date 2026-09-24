@@ -154,6 +154,7 @@ const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:I
 .dshTermHeader{flex:none;box-sizing:border-box;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
 .dshTermHeaderLead{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;margin-right:2px}
 .dshTermHeaderState{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}
+.dshTermHeaderActions{flex:none;display:flex;align-items:center;gap:2px;margin-left:auto}
 .dshTermNewWrap{display:inline-flex;align-items:center;flex:none;border-radius:7px}
 .dshTermNew{width:26px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
 .dshTermNew:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
@@ -625,47 +626,52 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
           title: '拖动调整高度',
           onPointerDown: startResize,
         }),
-        /* 头部：引导符 + 状态 + 新建组合按钮 + 重启 + 收起 */
+        /* 头部：引导符 + 状态(flex:1 撑满) + 右侧按钮组(margin-left:auto 右对齐) */
         React.createElement(
           'div',
           { className: 'dshTermHeader' },
           React.createElement('span', { className: 'dshTermHeaderLead', 'aria-hidden': true }, TerminalGlyph14()),
           React.createElement('span', { className: 'dshTermHeaderState', title: stateLabel }, stateLabel),
-          /* 新建组合按钮：+ 主按钮 + 分隔线 + 下拉箭头 */
+          /* 右侧按钮组：+号/下拉 + 重启 + 收起，统一右对齐 */
           React.createElement(
             'div',
-            { className: 'dshTermNewWrap' },
+            { className: 'dshTermHeaderActions' },
+            /* 新建组合按钮：+ 主按钮 + 分隔线 + 下拉箭头 */
+            React.createElement(
+              'div',
+              { className: 'dshTermNewWrap' },
+              React.createElement(
+                'button',
+                {
+                  className: 'dshTermNew',
+                  title: '新建终端',
+                  'aria-label': '新建终端',
+                  disabled: busy,
+                  onClick: () => { void newTab(); },
+                },
+                Plus12(),
+              ),
+              React.createElement('div', { className: 'dshTermNewSep' }),
+              React.createElement(DropdownMenu, {
+                busy,
+                onNewTerminal: () => { void newTab(); },
+                onSplitTerminal: () => { void splitTerminal(); },
+                terminalTypes,
+                onNewByType: handleNewByType,
+              }),
+            ),
+            /* 重启对已退出历史终端也需可达 */
+            React.createElement(RestartButton, { active: activeInstance, busy, onRestart: () => { void restartActive(); } }),
             React.createElement(
               'button',
               {
-                className: 'dshTermNew',
-                title: '新建终端',
-                'aria-label': '新建终端',
-                disabled: busy,
-                onClick: () => { void newTab(); },
+                className: 'dshTermCollapse',
+                title: '收起面板（' + shortcutLabel + '）',
+                'aria-label': '收起面板',
+                onClick: toggle,
               },
-              Plus12(),
+              ChevronDown14(),
             ),
-            React.createElement('div', { className: 'dshTermNewSep' }),
-            React.createElement(DropdownMenu, {
-              busy,
-              onNewTerminal: () => { void newTab(); },
-              onSplitTerminal: () => { void splitTerminal(); },
-              terminalTypes,
-              onNewByType: handleNewByType,
-            }),
-          ),
-          /* 重启对已退出历史终端也需可达 */
-          React.createElement(RestartButton, { active: activeInstance, busy, onRestart: () => { void restartActive(); } }),
-          React.createElement(
-            'button',
-            {
-              className: 'dshTermCollapse',
-              title: '收起面板（' + shortcutLabel + '）',
-              'aria-label': '收起面板',
-              onClick: toggle,
-            },
-            ChevronDown14(),
           ),
         ),
         /* Body：左侧终端显示区域 + 右侧终端列表 */
