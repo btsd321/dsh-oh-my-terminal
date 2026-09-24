@@ -4,15 +4,21 @@
  *              从扁平 TerminalTab 列表升级为 TerminalInstance + TerminalGroup 二层结构，
  *              支持终端拆分（split）与组内水平并排显示。
  *
+ *              状态管理采用 useReducer 将 instances/groups/activeInstanceId/busy/bootReady
+ *              合并为单一 TerminalState，避免多 setter 同步遗漏。配置拉取（/config）
+ *              统一在 useConfig Hook 中完成，消除双次请求。
+ *
  *              本文件只负责状态管理（Hooks），不包含 UI 渲染——遵循 SRP 原则。
  *              所有 API 调用经内部辅助函数集中处理，不暴露给组件层。
  *
  * 模块职责边界：
+ * - terminalReducer：纯函数 reducer，处理所有 TerminalAction
  * - usePanelHeight：拖拽调高 + localStorage 持久化
  * - usePanelGeometry：对话列几何测量 + scrollBody paddingBottom 注入
- * - useSessionRestore：挂载时拉取 /sessions 恢复实例与组
- * - usePanelShortcut：拉取 /config 配置快捷键 + 全局 keydown 监听
- * - useTerminalTabs：终端 CRUD（新建/关闭/重启/拆分/退出标记）
+ * - useTerminalState：useReducer 封装 + 启动恢复（替代旧 useSessionRestore）
+ * - useConfig：统一拉取 /config（快捷键 + 终端种类），消除双次请求
+ * - usePanelShortcut：全局 keydown 监听（消费 useConfig 返回的 shortcut）
+ * - useTerminalTabs：终端 CRUD（新建/关闭/重启/拆分/退出标记），接收 dispatch
  */
 
 import * as React from 'react';
@@ -22,6 +28,7 @@ import type {
   TerminalInstance, TerminalGroup,
   SessionEntry, SessionsResponse, CreateSessionResponse,
   ConfigResponse, ConversationGeo, DeleteSessionResponse,
+  TerminalState, TerminalAction, TerminalType,
 } from './types.js';
 
 const log = createLogger('terminal-client');
@@ -42,6 +49,9 @@ const MAX_HEIGHT_RATIO = 0.78;
 
 /** 默认面板高度占视口的百分比（首次无 localStorage 时） */
 const DEFAULT_HEIGHT_RATIO = 0.36;
+
+/** 默认切换快捷键字符串 */
+const DEFAULT_SHORTCUT_STR = 'ctrl+`';
 
 // —— API 辅助函数（仅 hooks 内部使用） ——
 
@@ -82,6 +92,186 @@ const del = (path: string): Promise<void> =>
   api<DeleteSessionResponse>(path, { method: 'DELETE' })
     .then(() => { /* 删除成功，无需处理 */ })
     .catch(() => { /* 会话可能已删，幂等 */ });
+
+// —— Reducer ——
+
+/** 终端状态初始值 */
+const INITIAL_STATE: TerminalState = {
+  instances: [],
+  groups: [],
+  activeInstanceId: null,
+  busy: false,
+  bootReady: false,
+};
+
+/**
+ * 终端面板状态 reducer：纯函数处理所有 TerminalAction。
+ *
+ * 设计要点：
+ * - REMOVE_INSTANCE：同时从 instances 和 groups 移除，空组整体移除，维护活跃位
+ * - SPLIT_INSTANCE：插入到 afterInstanceId 之后（不是末尾），保持拆分位置直觉
+ * - RESTART_INSTANCE：更新 instances 和 groups 中的引用，保留 title
+ * - MARK_EXITED：同步更新 instances 和 groups 中的 exited 标记
+ *
+ * @param state - 当前状态
+ * @param action - 要处理的 action
+ * @returns 新状态（不可变更新）
+ */
+export function terminalReducer(state: TerminalState, action: TerminalAction): TerminalState {
+  switch (action.type) {
+    case 'RESTORE': {
+      return {
+        ...state,
+        instances: action.instances,
+        groups: action.groups,
+        activeInstanceId: action.activeInstanceId,
+      };
+    }
+
+    case 'SET_BUSY': {
+      return { ...state, busy: action.busy };
+    }
+
+    case 'SET_BOOT_READY': {
+      return { ...state, bootReady: true, busy: false };
+    }
+
+    case 'ADD_INSTANCE': {
+      return {
+        ...state,
+        instances: [...state.instances, action.instance],
+        groups: [...state.groups, action.group],
+        activeInstanceId: action.instance.id,
+      };
+    }
+
+    case 'SPLIT_INSTANCE': {
+      // 1. 追加到全局实例列表
+      const nextInstances = [...state.instances, action.instance];
+      // 2. 在目标组内插入到 afterInstanceId 之后
+      const nextGroups = state.groups.map(g => {
+        if (g.id !== action.groupId) return g;
+        const idx = g.instances.findIndex(i => i.id === action.afterInstanceId);
+        const newGroupInstances = [...g.instances];
+        newGroupInstances.splice(idx + 1, 0, action.instance);
+        return {
+          ...g,
+          instances: newGroupInstances,
+          activeInstanceId: action.instance.id,
+        };
+      });
+      return {
+        ...state,
+        instances: nextInstances,
+        groups: nextGroups,
+        activeInstanceId: action.instance.id,
+      };
+    }
+
+    case 'REMOVE_INSTANCE': {
+      const id = action.id;
+      // 1. 从全局实例列表中移除，计算新的全局活跃位
+      const curIdx = state.instances.findIndex(t => t.id === id);
+      const nextInstances = state.instances.filter(t => t.id !== id);
+      let nextActiveId = state.activeInstanceId;
+      if (nextActiveId === id) {
+        if (nextInstances.length === 0) {
+          nextActiveId = null;
+        } else {
+          nextActiveId = (nextInstances[Math.min(curIdx, nextInstances.length - 1)] ?? nextInstances[0]).id;
+        }
+      }
+      // 2. 从 groups 中移除实例，空组整体移除，维护组内活跃位
+      const nextGroups: TerminalGroup[] = [];
+      for (const g of state.groups) {
+        const filtered = g.instances.filter(t => t.id !== id);
+        if (filtered.length === 0) continue; // 空组移除
+        if (filtered.length === g.instances.length) {
+          // 该组不含目标实例，保持不变
+          nextGroups.push(g);
+        } else {
+          // 组内含目标实例，更新组内活跃位
+          let groupActiveId = g.activeInstanceId;
+          if (groupActiveId === id) {
+            const removedIdx = g.instances.findIndex(t => t.id === id);
+            groupActiveId = (filtered[Math.min(removedIdx, filtered.length - 1)] ?? filtered[0]).id;
+          }
+          nextGroups.push({ ...g, instances: filtered, activeInstanceId: groupActiveId });
+        }
+      }
+      return {
+        ...state,
+        instances: nextInstances,
+        groups: nextGroups,
+        activeInstanceId: nextActiveId,
+      };
+    }
+
+    case 'RESTART_INSTANCE': {
+      const { oldId, newInstance } = action;
+      // 1. 更新全局实例列表中的引用
+      const nextInstances = state.instances.map(t => (t.id === oldId ? newInstance : t));
+      // 2. 更新 groups 中该实例的引用及组内活跃位
+      const nextGroups = state.groups.map(g => ({
+        ...g,
+        instances: g.instances.map(t => (t.id === oldId ? newInstance : t)),
+        activeInstanceId: g.activeInstanceId === oldId ? newInstance.id : g.activeInstanceId,
+      }));
+      return {
+        ...state,
+        instances: nextInstances,
+        groups: nextGroups,
+        activeInstanceId: state.activeInstanceId === oldId ? newInstance.id : state.activeInstanceId,
+      };
+    }
+
+    case 'MARK_EXITED': {
+      const id = action.id;
+      return {
+        ...state,
+        instances: state.instances.map(t => (t.id === id ? { ...t, exited: true } : t)),
+        groups: state.groups.map(g => ({
+          ...g,
+          instances: g.instances.map(t => (t.id === id ? { ...t, exited: true } : t)),
+        })),
+      };
+    }
+
+    case 'SET_ACTIVE': {
+      const id = action.id;
+      // 同时更新全局活跃位和所在组的组内活跃位
+      const nextGroups = state.groups.map(g => {
+        if (g.instances.some(i => i.id === id)) {
+          return { ...g, activeInstanceId: id };
+        }
+        return g;
+      });
+      return {
+        ...state,
+        activeInstanceId: id,
+        groups: nextGroups,
+      };
+    }
+
+    case 'RENAME_INSTANCE': {
+      const { id, title } = action;
+      return {
+        ...state,
+        instances: state.instances.map(t => (t.id === id ? { ...t, title } : t)),
+        groups: state.groups.map(g => ({
+          ...g,
+          instances: g.instances.map(t => (t.id === id ? { ...t, title } : t)),
+        })),
+      };
+    }
+
+    default: {
+      // 穷尽检查：确保所有 action 类型都已处理
+      const _exhaustive: never = action;
+      return state;
+    }
+  }
+}
 
 // —— Hook 1: usePanelHeight ——
 
@@ -198,59 +388,40 @@ export function usePanelGeometry(rootRef: React.RefObject<HTMLDivElement | null>
   return { geo };
 }
 
-// —— Hook 3: useSessionRestore ——
+// —— Hook 3: useTerminalState（替代旧 useSessionRestore） ——
 
-/** useSessionRestore 返回值 */
-export interface SessionRestore {
-  /** 终端实例列表 */
-  instances: TerminalInstance[];
-  /** 实例列表 setter */
-  setInstances: React.Dispatch<React.SetStateAction<TerminalInstance[]>>;
-  /** 终端组列表 */
-  groups: TerminalGroup[];
-  /** 组列表 setter */
-  setGroups: React.Dispatch<React.SetStateAction<TerminalGroup[]>>;
-  /** 当前活跃实例 id */
-  activeInstanceId: string | null;
-  /** activeInstanceId setter */
-  setActiveInstanceId: React.Dispatch<React.SetStateAction<string | null>>;
-  /** 操作进行中（禁用按钮） */
-  busy: boolean;
-  /** busy setter（useTerminalTabs 共用） */
-  setBusy: React.Dispatch<React.SetStateAction<boolean>>;
-  /** 启动恢复完成（实例与组列表就绪） */
-  bootReady: boolean;
+/** useTerminalState 返回值 */
+export interface TerminalStateResult {
+  /** 当前状态 */
+  state: TerminalState;
+  /** dispatch 函数 */
+  dispatch: React.Dispatch<TerminalAction>;
 }
 
 /**
- * 会话恢复：挂载时拉取 /sessions 恢复所有终端实例与组。
+ * 终端面板统一状态管理：useReducer 封装 + 启动恢复。
  *
- * 改造要点（相对于旧版 useSessionRestore）：
- * - 数据模型从扁平 tabs 升级为 instances + groups 二层结构
- * - 恢复时每个实例创建一个独立 TerminalGroup（单实例组）
- * - 未来拆分功能可在同一 group 内追加实例
+ * 将原 useSessionRestore 的 3 个独立 state（instances/groups/activeInstanceId）
+ * 与 busy/bootReady 合并为单一 TerminalState，通过 terminalReducer 处理所有操作，
+ * 消除多 setter 同步遗漏风险。
  *
- * 面板按对话注入，切换工作区会重挂本组件，实例会丢——但宿主仍持有 PTY。在此
- * 恢复（只 attach，绝不 create——无人打开的挂载不产孤儿 PTY）。bootOnce 守卫
- * 防 React 18 严格模式双执行重复拉取。
+ * 挂载时拉取 /sessions 恢复所有存活终端实例与组。面板按对话注入，切换工作区会重挂
+ * 本组件，实例会丢——但宿主仍持有 PTY。在此恢复（只 attach，绝不 create——无人打开
+ * 的挂载不产孤儿 PTY）。bootOnce 守卫防 React 18 严格模式双执行重复拉取。
  *
- * @returns instances/groups/activeInstanceId/busy state 与 setter，及 bootReady 标记
+ * @returns state 与 dispatch
  */
-export function useSessionRestore(): SessionRestore {
-  const { useEffect, useRef, useState } = React;
-  const [instances, setInstances] = useState<TerminalInstance[]>([]);
-  const [groups, setGroups] = useState<TerminalGroup[]>([]);
-  const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+export function useTerminalState(): TerminalStateResult {
+  const { useEffect, useRef, useReducer } = React;
+  const [state, dispatch] = useReducer(terminalReducer, INITIAL_STATE);
   /** 恢复已完成标记（防止 React 18 严格模式双执行重复拉取） */
   const bootOnce = useRef(false);
-  const [bootReady, setBootReady] = useState(false);
 
   useEffect(() => {
     if (bootOnce.current) return;
     bootOnce.current = true;
     void (async (): Promise<void> => {
-      setBusy(true);
+      dispatch({ type: 'SET_BUSY', busy: true });
       try {
         const list = await api<SessionsResponse>('/sessions');
         /* 只恢复存活的 PTY 会话——已退出的历史不恢复。
@@ -267,7 +438,6 @@ export function useSessionRestore(): SessionRestore {
             cwd: typeof x.cwd === 'string' ? x.cwd : null,
             exited: false,
           }));
-          setInstances(restoredInstances);
 
           // 2. 每个实例创建独立的 TerminalGroup（单实例组）
           const restoredGroups: TerminalGroup[] = restoredInstances.map((inst): TerminalGroup => ({
@@ -275,67 +445,69 @@ export function useSessionRestore(): SessionRestore {
             instances: [inst],
             activeInstanceId: inst.id,
           }));
-          setGroups(restoredGroups);
 
           // 3. 激活最后一个存活实例
-          setActiveInstanceId(live[live.length - 1].id);
+          const lastId = live[live.length - 1].id;
+          dispatch({
+            type: 'RESTORE',
+            instances: restoredInstances,
+            groups: restoredGroups,
+            activeInstanceId: lastId,
+          });
         }
       } catch (err) {
         log.error('恢复会话失败', err);
       } finally {
-        setBusy(false);
-        setBootReady(true);
+        dispatch({ type: 'SET_BOOT_READY' });
       }
     })();
   }, []);
 
-  return {
-    instances, setInstances,
-    groups, setGroups,
-    activeInstanceId, setActiveInstanceId,
-    busy, setBusy,
-    bootReady,
-  };
+  return { state, dispatch };
 }
 
-// —— Hook 4: usePanelShortcut ——
+// —— Hook 4: useConfig（统一 /config 拉取） ——
 
-/** usePanelShortcut 返回值 */
-export interface PanelShortcut {
-  /** 当前切换快捷键 spec */
+/** useConfig 返回值 */
+export interface ConfigResult {
+  /** 切换快捷键 spec */
   shortcut: ShortcutSpec | null;
   /** 快捷键显示标签 */
   shortcutLabel: string;
+  /** 终端种类列表 */
+  terminalTypes: TerminalType[];
 }
 
 /**
- * 面板切换快捷键：拉取 /config 配置 + 注册全局 keydown 监听。
+ * 统一拉取 /config：一次请求同时获取 toggleShortcut 和 terminalTypes。
  *
- * 拉取配置路由缺失时（旧宿主）回落默认值。keydown 监听在终端 pane 内聚焦时
- * 不触发（留给 shell）——当快捷键是终端也消费的控制字符（如 Ctrl+J 换行）时
- * 避免误切面板。
+ * 消除原先 usePanelShortcut 与 client.tsx 分别拉取 /config 的双次请求问题。
+ * 路由缺失时（旧宿主）回落默认值。
  *
  * @param setOpen - 展开/折叠 state setter（keydown 命中时切换）
- * @returns 快捷键 spec 与显示标签
+ * @returns 快捷键 spec、显示标签、终端种类列表
  */
-export function usePanelShortcut(setOpen: React.Dispatch<React.SetStateAction<boolean>>): PanelShortcut {
+export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>): ConfigResult {
   const { useEffect, useState } = React;
-  const DEFAULT_SHORTCUT = parseShortcut('ctrl+`');
-  const [shortcut, setShortcut] = useState<ShortcutSpec | null>(DEFAULT_SHORTCUT);
+  const defaultShortcut = parseShortcut(DEFAULT_SHORTCUT_STR);
+  const [shortcut, setShortcut] = useState<ShortcutSpec | null>(defaultShortcut);
+  const [terminalTypes, setTerminalTypes] = useState<TerminalType[]>([]);
   const shortcutLabel = shortcut?.label ?? 'Ctrl+`';
 
-  /*
-   * 拉取宿主半插件配置：切换快捷键（及未来用的 shell 命令）。路由缺失时（旧宿主）
-   * 回落默认值。
-   */
+  /* 一次拉取 /config，同时填充快捷键和终端种类 */
   useEffect(() => {
     void (async (): Promise<void> => {
       try {
         const cfg = await api<ConfigResponse>('/config');
+        // 1. 解析切换快捷键
         if (typeof cfg.toggleShortcut === 'string' && cfg.toggleShortcut.trim().length > 0) {
           const parsed = parseShortcut(cfg.toggleShortcut);
           if (parsed !== null) setShortcut(parsed);
           else log.warn('忽略无效的 toggleShortcut', cfg.toggleShortcut);
+        }
+        // 2. 填充终端种类列表
+        if (Array.isArray(cfg.terminalTypes)) {
+          setTerminalTypes(cfg.terminalTypes);
         }
       } catch {
         /* 旧宿主无 /config——保持默认 */
@@ -343,9 +515,12 @@ export function usePanelShortcut(setOpen: React.Dispatch<React.SetStateAction<bo
     })();
   }, []);
 
+  /* 全局 keydown 监听：命中快捷键时切换面板 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!matchesShortcut(shortcut, e)) return;
+      /* 终端 pane 内聚焦时不触发（留给 shell）——当快捷键是终端也消费的控制字符
+       * （如 Ctrl+J 换行）时避免误切面板 */
       if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
       e.preventDefault();
       setOpen(v => !v);
@@ -354,27 +529,17 @@ export function usePanelShortcut(setOpen: React.Dispatch<React.SetStateAction<bo
     return () => window.removeEventListener('keydown', onKey);
   }, [shortcut, setOpen]);
 
-  return { shortcut, shortcutLabel };
+  return { shortcut, shortcutLabel, terminalTypes };
 }
 
-// —— Hook 5: useTerminalTabs ——
+// —— Hook 5: useTerminalTabs（改造为接收 dispatch） ——
 
 /** useTerminalTabs 的入参 */
 export interface TerminalTabsParams {
-  /** 终端实例列表 */
-  instances: TerminalInstance[];
-  /** 实例列表 setter */
-  setInstances: React.Dispatch<React.SetStateAction<TerminalInstance[]>>;
-  /** 终端组列表 */
-  groups: TerminalGroup[];
-  /** 组列表 setter */
-  setGroups: React.Dispatch<React.SetStateAction<TerminalGroup[]>>;
-  /** 当前活跃实例 id */
-  activeInstanceId: string | null;
-  /** activeInstanceId setter */
-  setActiveInstanceId: React.Dispatch<React.SetStateAction<string | null>>;
-  /** busy setter */
-  setBusy: React.Dispatch<React.SetStateAction<boolean>>;
+  /** 当前终端状态 */
+  state: TerminalState;
+  /** dispatch 函数 */
+  dispatch: React.Dispatch<TerminalAction>;
   /** 当前活跃实例（instances.find 结果） */
   activeInstance: TerminalInstance | null;
   /** 当前活跃实例所在的组 */
@@ -402,35 +567,24 @@ export interface TerminalTabs {
 /**
  * 终端 CRUD：新建、关闭、重启、拆分、退出标记。
  *
- * 改造要点（相对于旧版 useTerminalTabs）：
- * - newTab：创建新实例 + 创建独立 TerminalGroup
- * - splitTerminal：在当前活跃实例所在 group 中插入新实例（新增功能）
- * - closeTab：从 instances 和 groups 中同时移除，维护 group 结构
- * - restartActive：更新 instances 和 groups 中的引用
- * - onExit：标记实例为 exited
+ * 所有状态变更通过 dispatch 提交到 terminalReducer，确保 instances/groups/activeInstanceId
+ * 原子更新，消除多 setter 同步遗漏风险。
  *
- * @param params - 实例/组 state 与工作区上下文
+ * @param params - 终端状态、dispatch 与工作区上下文
  * @returns 五个终端操作回调
  */
 export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
   const {
-    instances, setInstances,
-    groups, setGroups,
-    activeInstanceId, setActiveInstanceId,
-    setBusy, activeInstance, activeGroup,
+    state, dispatch,
+    activeInstance, activeGroup,
     workspaceCwd, sessionId,
   } = params;
   const { useCallback } = React;
 
   /** 会话退出回调：标记对应实例为 exited */
   const onExit = useCallback((id: string): void => {
-    setInstances(cur => cur.map(t => (t.id === id ? { ...t, exited: true } : t)));
-    /* 同步更新 groups 中该实例的 exited 状态 */
-    setGroups(cur => cur.map(g => ({
-      ...g,
-      instances: g.instances.map(t => (t.id === id ? { ...t, exited: true } : t)),
-    })));
-  }, [setInstances, setGroups]);
+    dispatch({ type: 'MARK_EXITED', id });
+  }, [dispatch]);
 
   /*
    * + 按钮：在当前工作区新开会话，创建新实例 + 独立组。sessionId 随行使宿主半在
@@ -443,7 +597,7 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
    * @param cmdline - 完整启动命令（可选，优先于 shell）
    */
   const newTab = useCallback(async (shell?: string, cmdline?: string): Promise<void> => {
-    setBusy(true);
+    dispatch({ type: 'SET_BUSY', busy: true });
     try {
       const cwd = workspaceCwd ?? activeInstance?.cwd ?? null;
       const body: Record<string, unknown> = { cwd, sessionId };
@@ -460,7 +614,6 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
         cwd: s.cwd ?? cwd,
         exited: false,
       };
-      setInstances(cur => [...cur, newInstance]);
 
       // 2. 创建独立组（单实例组）
       const newGroup: TerminalGroup = {
@@ -468,15 +621,14 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
         instances: [newInstance],
         activeInstanceId: s.id,
       };
-      setGroups(cur => [...cur, newGroup]);
 
-      setActiveInstanceId(s.id);
+      dispatch({ type: 'ADD_INSTANCE', instance: newInstance, group: newGroup });
     } catch (err) {
       log.error('新建终端失败', err);
     } finally {
-      setBusy(false);
+      dispatch({ type: 'SET_BUSY', busy: false });
     }
-  }, [workspaceCwd, activeInstance, sessionId, setBusy, setInstances, setGroups, setActiveInstanceId]);
+  }, [workspaceCwd, activeInstance, sessionId, dispatch]);
 
   /**
    * 拆分终端：在当前活跃实例所在 group 中插入新实例。
@@ -493,7 +645,7 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
       await newTab(shell, cmdline);
       return;
     }
-    setBusy(true);
+    dispatch({ type: 'SET_BUSY', busy: true });
     try {
       const cwd = workspaceCwd ?? activeInstance?.cwd ?? null;
       const body: Record<string, unknown> = { cwd, sessionId };
@@ -501,7 +653,7 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
       if (typeof cmdline === 'string' && cmdline.length > 0) body.cmdline = cmdline;
       const s = await post<CreateSessionResponse>('/sessions', body);
 
-      // 1. 创建新实例并追加到全局实例列表
+      // 1. 创建新实例
       const newInstance: TerminalInstance = {
         id: s.id,
         title: s.title,
@@ -509,74 +661,33 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
         cwd: s.cwd ?? cwd,
         exited: false,
       };
-      setInstances(cur => [...cur, newInstance]);
 
-      // 2. 将新实例插入活跃实例之后（而非末尾），保持拆分位置直觉
-      setGroups(cur => cur.map(g => {
-        if (g.id !== activeGroup.id) return g;
-        const idx = g.instances.findIndex(i => i.id === activeInstanceId);
-        const newInstances = [...g.instances];
-        newInstances.splice(idx + 1, 0, newInstance);
-        return {
-          ...g,
-          instances: newInstances,
-          activeInstanceId: s.id,
-        };
-      }));
-
-      setActiveInstanceId(s.id);
+      // 2. 通过 SPLIT_INSTANCE 插入到活跃实例之后
+      dispatch({
+        type: 'SPLIT_INSTANCE',
+        instance: newInstance,
+        groupId: activeGroup.id,
+        afterInstanceId: state.activeInstanceId ?? activeGroup.instances[0].id,
+      });
     } catch (err) {
       log.error('拆分终端失败', err);
     } finally {
-      setBusy(false);
+      dispatch({ type: 'SET_BUSY', busy: false });
     }
-  }, [activeGroup, activeInstance, workspaceCwd, sessionId, setBusy, setInstances, setGroups, setActiveInstanceId, newTab]);
+  }, [activeGroup, activeInstance, workspaceCwd, sessionId, dispatch, state.activeInstanceId, newTab]);
 
   /**
    * ✕ 按钮关闭终端：删会话、从 instances 和 groups 中同时移除、激活邻居。
    *
    * 组内只剩一个实例时整个组被移除；组内有多个实例时只移除目标实例，
    * 活跃位切换到组内相邻实例。
+   *
+   * @param id - 要关闭的终端实例 id
    */
   const closeTab = useCallback(async (id: string): Promise<void> => {
-    // 1. 从全局实例列表中移除
-    setInstances(cur => {
-      const idx = cur.findIndex(t => t.id === id);
-      if (idx === -1) return cur;
-      const next = cur.filter(t => t.id !== id);
-      /* 如果被关闭的是当前活跃实例，切换到全局邻居 */
-      setActiveInstanceId(act => {
-        if (act !== id) return act;
-        if (next.length === 0) return null;
-        return (next[Math.min(idx, next.length - 1)] ?? next[0]).id;
-      });
-      return next;
-    });
-
-    // 2. 从 groups 中移除实例，空组整体移除
-    setGroups(cur => {
-      const updated: TerminalGroup[] = [];
-      for (const g of cur) {
-        const filtered = g.instances.filter(t => t.id !== id);
-        if (filtered.length === 0) continue; // 空组移除
-        if (filtered.length === g.instances.length) {
-          // 该组不含目标实例，保持不变
-          updated.push(g);
-        } else {
-          // 组内含目标实例，更新组内活跃位
-          let nextActive = g.activeInstanceId;
-          if (nextActive === id) {
-            const removedIdx = g.instances.findIndex(t => t.id === id);
-            nextActive = (filtered[Math.min(removedIdx, filtered.length - 1)] ?? filtered[0]).id;
-          }
-          updated.push({ ...g, instances: filtered, activeInstanceId: nextActive });
-        }
-      }
-      return updated;
-    });
-
+    dispatch({ type: 'REMOVE_INSTANCE', id });
     await del('/sessions/' + id);
-  }, [setInstances, setGroups, setActiveInstanceId]);
+  }, [dispatch]);
 
   /*
    * 头部刷新：经宿主 restart 路由原位重启活跃终端——重新生成 shell 并继承旧滚动
@@ -585,7 +696,7 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
    */
   const restartActive = useCallback(async (): Promise<void> => {
     if (activeInstance === null) return;
-    setBusy(true);
+    dispatch({ type: 'SET_BUSY', busy: true });
     try {
       /* 优先用实例自身持久化的 cwd（实例可能属于非当前屏幕工作区）；无持久化 cwd
        * 的遗留实例回落当前工作区。 */
@@ -594,7 +705,7 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
         { cwd: activeInstance.cwd ?? workspaceCwd },
       );
 
-      // 1. 更新全局实例列表中的引用
+      // 构建重启后的实例（保留旧 title）
       const restartedInstance: TerminalInstance = {
         id: s.id,
         title: activeInstance.title,
@@ -602,22 +713,14 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
         cwd: s.cwd ?? activeInstance.cwd ?? workspaceCwd ?? null,
         exited: false,
       };
-      setInstances(cur => cur.map(t => (t.id === activeInstance.id ? restartedInstance : t)));
 
-      // 2. 更新 groups 中该实例的引用
-      setGroups(cur => cur.map(g => ({
-        ...g,
-        instances: g.instances.map(t => (t.id === activeInstance.id ? restartedInstance : t)),
-        activeInstanceId: g.activeInstanceId === activeInstance.id ? s.id : g.activeInstanceId,
-      })));
-
-      setActiveInstanceId(s.id);
+      dispatch({ type: 'RESTART_INSTANCE', oldId: activeInstance.id, newInstance: restartedInstance });
     } catch (err) {
       log.error('重启失败', err);
     } finally {
-      setBusy(false);
+      dispatch({ type: 'SET_BUSY', busy: false });
     }
-  }, [activeInstance, workspaceCwd, setBusy, setInstances, setGroups, setActiveInstanceId]);
+  }, [activeInstance, workspaceCwd, dispatch]);
 
   return { newTab, closeTab, restartActive, splitTerminal, onExit };
 }
