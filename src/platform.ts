@@ -10,6 +10,10 @@
  *              node-pty 自动按平台选 ConPTY 或 openpty，本模块不手动 fork。
  */
 
+import { execSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+
 /** spawn 参数：node-pty spawn(file, args, opts) 的 file 和 args */
 export interface SpawnArgs {
   /** 可执行文件路径 */
@@ -151,12 +155,9 @@ const posixAdapter: PlatformAdapter = {
 function detectGitBash(): string | null {
   try {
     // 从 PATH 中找 git.exe
-    const { execSync } = require('node:child_process') as typeof import('node:child_process');
     const gitPath = execSync('where git', { encoding: 'utf8', timeout: 3000 }).trim().split(/\r?\n/)[0];
     if (typeof gitPath !== 'string' || gitPath.length === 0) return null;
     // git.exe 在 <GitRoot>/cmd/git.exe → bash.exe 在 <GitRoot>/bin/bash.exe
-    const { join, dirname } = require('node:path') as typeof import('node:path');
-    const { existsSync } = require('node:fs') as typeof import('node:fs');
     const gitDir = dirname(dirname(gitPath));
     const bashPath = join(gitDir, 'bin', 'bash.exe');
     return existsSync(bashPath) ? bashPath : null;
@@ -176,7 +177,6 @@ function detectGitBash(): string | null {
  */
 function detectWin32DefaultShell(): string {
   try {
-    const { execSync } = require('node:child_process') as typeof import('node:child_process');
     // 优先检查 pwsh（PowerShell 7）
     try {
       const pwshPath = execSync('where pwsh', { encoding: 'utf8', timeout: 3000 }).trim().split(/\r?\n/)[0];
