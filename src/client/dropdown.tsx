@@ -28,8 +28,6 @@ export interface DropdownMenuProps {
   terminalTypes: TerminalType[];
   /** 按种类新建终端 */
   onNewByType: (typeId: string) => void;
-  /** 按种类拆分终端 */
-  onSplitByType: (typeId: string) => void;
 }
 
 // —— 组件实现 ——
@@ -45,7 +43,7 @@ export interface DropdownMenuProps {
  * @returns 下拉菜单根元素
  */
 export function DropdownMenu(props: DropdownMenuProps): ReactElement {
-  const { busy, onNewTerminal, onSplitTerminal, terminalTypes, onNewByType, onSplitByType } = props;
+  const { busy, onNewTerminal, onSplitTerminal, terminalTypes, onNewByType } = props;
   const { useState, useEffect, useRef, useCallback } = React;
 
   /** 菜单是否展开 */
@@ -124,37 +122,25 @@ export function DropdownMenu(props: DropdownMenuProps): ReactElement {
     ),
   );
 
-  /* 终端种类菜单项（仅有种类时显示分隔线与种类列表） */
+  /* 终端种类菜单项（仅有种类时显示分隔线与种类列表，每项直接新建对应终端） */
   if (terminalTypes.length > 0) {
     menuItems.push(
       React.createElement('div', { key: 'sep', className: 'dshTermDropdownSep' }),
     );
 
     for (const tt of terminalTypes) {
-      /* 按种类新建 */
+      /* 跳过 "默认 Shell"——已在上方"新建终端"中覆盖 */
+      if (tt.id === 'default') continue;
       menuItems.push(
         React.createElement(
           'div',
           {
-            key: 'new-' + tt.id,
+            key: tt.id,
             className: 'dshTermDropdownItem',
             onClick: handleItemClick(() => onNewByType(tt.id)),
           },
           Plus12(),
-          React.createElement('span', null, '新建 ' + tt.label),
-        ),
-      );
-      /* 按种类拆分 */
-      menuItems.push(
-        React.createElement(
-          'div',
-          {
-            key: 'split-' + tt.id,
-            className: 'dshTermDropdownItem',
-            onClick: handleItemClick(() => onSplitByType(tt.id)),
-          },
-          Split14(),
-          React.createElement('span', null, '拆分 ' + tt.label),
+          React.createElement('span', null, tt.label),
         ),
       );
     }

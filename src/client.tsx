@@ -194,6 +194,10 @@ const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:I
 .dshTermSideItemClose{width:18px;height:18px;border:none;background:transparent;color:inherit;border-radius:4px;display:grid;place-items:center;cursor:pointer;padding:0;opacity:0;flex:none}
 .dshTermSideItem:hover .dshTermSideItemClose{opacity:.65}
 .dshTermSideItemClose:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
+.dshTermSideItemInput{flex:1;min-width:0;height:20px;padding:0 4px;border:1px solid var(--dsw-alias-label-primary);border-radius:3px;background:var(--dsw-specific-tip);color:var(--dsw-alias-label-primary);font-size:12px;font-family:Inter,var(--dsw-font-family);outline:none}
+.dshTermContextMenu{position:fixed;z-index:200;min-width:120px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+.dshTermContextMenuItem{padding:4px 12px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
+.dshTermContextMenuItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 body.dshTermResizing{cursor:ns-resize!important;user-select:none!important;-webkit-user-select:none!important}`;
 
 /* 模块加载时幂等注入面板样式 <style> */
@@ -584,10 +588,14 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     void newTab(typeId);
   }, [newTab]);
 
-  /** 按种类拆分终端 */
-  const handleSplitByType = useCallback((typeId: string): void => {
-    void splitTerminal(typeId);
-  }, [splitTerminal]);
+  /** 重命名终端实例（更新本地 title） */
+  const handleRename = useCallback((instanceId: string, newName: string): void => {
+    setInstances(cur => cur.map(t => (t.id === instanceId ? { ...t, title: newName } : t)));
+    setGroups(cur => cur.map(g => ({
+      ...g,
+      instances: g.instances.map(t => (t.id === instanceId ? { ...t, title: newName } : t)),
+    })));
+  }, [setInstances, setGroups]);
 
   /** 选择终端实例（从右侧列表点击） */
   const handleSelectInstance = useCallback((instanceId: string): void => {
@@ -645,7 +653,6 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
               onSplitTerminal: () => { void splitTerminal(); },
               terminalTypes,
               onNewByType: handleNewByType,
-              onSplitByType: handleSplitByType,
             }),
           ),
           /* 重启对已退出历史终端也需可达 */
@@ -726,6 +733,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
               activeInstanceId,
               onSelect: handleSelectInstance,
               onClose: closeTab,
+              onRename: handleRename,
             })
             : null,
         ),
@@ -749,7 +757,6 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
         },
         React.createElement('span', { className: 'dshTermBarLead', 'aria-hidden': true }, TerminalGlyph14()),
         React.createElement('span', { className: 'dshTermBarTitle' }, '终端'),
-        React.createElement('span', { className: 'dshTermBarState' }, instances.length > 0 ? instances.length + ' 个终端' : '无会话'),
         React.createElement(
           'span',
           { className: 'dshTermBarActions', onClick: (e: React.MouseEvent) => e.stopPropagation() },
