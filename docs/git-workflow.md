@@ -147,7 +147,7 @@ Refs: #12
 ```
 fix(client): WebSocket 关闭时未清理 pty 导致进程泄漏
 
-面板关闭只断开 WebSocket 未 kill pty，导致 node-pty 进程成为孤儿
+面板关闭只断开 WebSocket 未 kill pty，导致 @lydell/node-pty 进程成为孤儿
 持续占用终端。
 
 Refs: #287

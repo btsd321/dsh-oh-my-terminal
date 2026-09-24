@@ -17,11 +17,11 @@ AI agent 或人类开发者在动手修改任何代码或文档之前，**必须
 
 ## 这是什么
 
-`dsh-oh-my-terminal` 是 DSH Web GUI 的底部终端面板插件，基于 node-pty 提供多标签交互式终端（Windows ConPTY / POSIX openpty），经 WebSocket 与浏览器端的 xterm.js 前端通信。用户通过 `dsh plugin --profile web add dsh-oh-my-terminal` 安装。
+`dsh-oh-my-terminal` 是 DSH Web GUI 的底部终端面板插件，基于 `@lydell/node-pty` 提供多标签交互式终端（Windows ConPTY / POSIX openpty），经 WebSocket 与浏览器端的 xterm.js 前端通信。用户通过 `dsh plugin --profile web add dsh-oh-my-terminal` 安装。
 
 架构分为两半加共享工具层：
 
-- **宿主半**（`src/index.ts`）：Cordis 插件入口，注册路由、管理 node-pty 进程、WebSocket 升级与数据转发、settings 集成
+- **宿主半**（`src/index.ts`）：Cordis 插件入口，注册路由、管理 `@lydell/node-pty` 进程、WebSocket 升级与数据转发、settings 集成
 - **浏览器半**（`src/client.tsx`）：React 组件，xterm.js 底部面板，多 tab 管理、快捷键、拖拽调高、剪贴板
 - **持久化层**（`src/persistence.ts`）：`SessionStore` 封装会话日志落盘/清理、元数据读写、启动恢复
 - **平台适配层**（`src/platform.ts`）：`PlatformAdapter` 接口与 POSIX/Windows 适配器，封装 OS 差异
@@ -45,7 +45,7 @@ pnpm run build
 pnpm exec tsx --test tests/unit/*.test.ts
 ```
 
-`pnpm-workspace.yaml` 的 `allowBuilds` 放行了 `node-pty`（原生编译）；`minimumReleaseAge: 0` 避免拦截当天发布的依赖。
+`pnpm-workspace.yaml` 的 `allowBuilds` 只放行 `esbuild`——`@lydell/node-pty` 的各平台二进制随子包 tarball 分发，安装期既不编译也不下载，所以不需要（也不应）为它放行构建脚本；`minimumReleaseAge: 0` 避免拦截当天发布的依赖。
 
 ## 架构
 
@@ -61,19 +61,22 @@ src/
 └── logger.ts           # 统一日志工具（createLogger：结构化 [时间戳][级别][模块] 内容）
 ```
 
-依赖方向：`index.ts` 依赖 `constants.ts`、`platform.ts`、`persistence.ts`、`server-command.ts`、`logger.ts`；`persistence.ts` 依赖 `constants.ts` 与 `logger.ts`；`client.tsx` 依赖 `shortcut.ts` 与 `logger.ts`，独立运行在浏览器侧。两半经 WebSocket 通信，路由前缀 `/api/dsh-remote-terminal`。
+依赖方向：`index.ts` 依赖 `constants.ts`、`platform.ts`、`persistence.ts`、`server-command.ts`、`logger.ts`；`persistence.ts` 依赖 `constants.ts` 与 `logger.ts`；`client.tsx` 依赖 `shortcut.ts` 与 `logger.ts`，独立运行在浏览器侧。两半经 WebSocket 通信，路由前缀 `/api/dsh-remote-terminal`。`@lydell/node-pty` 是外部原生依赖，不在这条内部依赖链上：宿主半只在首次创建会话时对它 `await import()`，不写顶层静态导入。
 
 ## 经验教训与硬约束
 
 - **插件形态**：宿主产物必须 ESM；命令名匹配 `/^[a-z][a-z0-9_-]*$/`；defineTool 的 object 节点必须写 `additionalProperties`；路由只走已鉴权通道
-- **node-pty**：`spawn` 时 `cwd` 必须存在且可访问，否则进程立即退出；Windows 上用 ConPTY，POSIX 上用 openpty，不要手动 `fork`
+- **@lydell/node-pty**：`spawn` 时 `cwd` 必须存在且可访问，否则进程立即退出；Windows 上用 ConPTY，POSIX 上用 openpty，不要手动 `fork`
+- **原生绑定懒加载**：宿主半不写顶层静态 `import { spawn } from '@lydell/node-pty'`。ESM 的异常发生在模块求值期，原生绑定一旦加载失败，整个 `lib/index.js` 就变成不可导入、dsh 报 `failed to import`，插件连 `apply` 都执行不到；改成首次创建会话时 `await import()`，失败被收敛在会话创建这一步，错误消息可读，插件其余路由仍可用
+- **精确钉 `@lydell/node-pty@1.1.0`**：它是 microsoft/node-pty 的预编译分发版（API 同源），N-API 产物一份二进制同时覆盖 ABI 127（Node 22）与 ABI 137（Node 24）；但该包 `dist-tags.latest` 指向 1.2.0-beta 系列，所以必须精确写 `1.1.0`，不能用 `^` 或 `latest`
+- **为什么换掉 node-pty**：旧包 tarball 的 `prebuilds/` 只有 darwin 与 win32，Linux 上依赖安装期执行 `node scripts/prebuild.js || node-gyp rebuild`；而 pnpm 10 对未授权的构建脚本只警告并跳过，`build/Release/pty.node` 从未生成。`@lydell/node-pty` 拆六个平台子包、二进制在 tarball 内，运行期不下载不编译，且 `package.json` 连 `scripts` 字段都不存在（不是空对象），pnpm 10/11/12 对没有脚本字段的包都不进入构建授权判断分支
 - **WebSocket**：socket error 必须在 destroy 之前挂 error 监听器，未处理 error 事件会直接掀翻进程；关闭时要成对清理 `data`/`close`/`error` 监听器
 - **xterm.css**：构建时从 `node_modules/@xterm/xterm/css/xterm.css` 复制到 `lib/xterm.css`，由宿主半 serve
 - **终端数据绝不进日志**：pty 输出与 WebSocket 数据帧是用户会话内容，不写日志
 
 ## 约束
 
-- 客户端可能是 Windows/Linux/macOS，宿主半跑在 dsh 所在机器上。node-pty 自动按平台选 ConPTY 或 openpty。
+- 客户端可能是 Windows/Linux/macOS，宿主半跑在 dsh 所在机器上。`@lydell/node-pty` 自动按平台选 ConPTY 或 openpty。
 - 不落明文凭据：日志和错误消息不打印密钥、令牌、口令内容。
-- 新增运行时依赖必须写进 `package.json`，版本锁定或用窄范围。
-- **禁止声明生命周期脚本**：`prepare`/`postinstall` 等一概不要加——pnpm 11 对声明了安装类脚本的 git-hosted 包直接报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，拦截只看 `package.json` 字段、不看脚本内容。
+- 新增运行时依赖必须写进 `package.json`，版本锁定或用窄范围；带原生绑定的依赖（如 `@lydell/node-pty`）一律精确钉版本，不留 `^` 浮动空间。
+- **禁止声明生命周期脚本**：`prepare`/`postinstall` 等一概不要加——pnpm 11 对声明了安装类脚本的 git-hosted 包直接报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，拦截只看 `package.json` 字段、不看脚本内容。反过来，选依赖时也可以用这条判断：`@lydell/node-pty` 就是这个约束的正面对照——它的 `package.json` 里根本没有 `scripts` 字段，pnpm 10 的只警告并跳过、11 起的默认报错退出、12 的现状，对没有脚本的包都不进入判断分支，因此不产生任何版本差异。这是本仓库能在 pnpm 10-12 上装得上、跑得起来的关键。
