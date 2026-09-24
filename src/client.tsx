@@ -763,6 +763,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
         },
         React.createElement('span', { className: 'dshTermBarLead', 'aria-hidden': true }, TerminalGlyph14()),
         React.createElement('span', { className: 'dshTermBarTitle' }, '终端'),
+        /* flex:1 spacer 把右侧按钮推到最右 */
+        React.createElement('span', { style: { flex: 1 } }),
         React.createElement(
           'span',
           { className: 'dshTermBarActions', onClick: (e: React.MouseEvent) => e.stopPropagation() },
