@@ -19,11 +19,14 @@ AI agent 或人类开发者在动手修改任何代码或文档之前，**必须
 
 `dsh-oh-my-terminal` 是 DSH Web GUI 的底部终端面板插件，基于 node-pty 提供多标签交互式终端（Windows ConPTY / POSIX openpty），经 WebSocket 与浏览器端的 xterm.js 前端通信。用户通过 `dsh plugin --profile web add dsh-oh-my-terminal` 安装。
 
-架构分为两半：
+架构分为两半加共享工具层：
 
-- **宿主半**（`src/index.ts`）：Cordis 插件入口，注册路由、管理 node-pty 进程、WebSocket 升级与数据转发
-- **浏览器半**（`src/client.tsx`）：React 组件，xterm.js 底部面板，多 tab 管理、快捷键、拖拽调高
-- **工具函数**（`src/server-command.ts`、`src/shortcut.ts`）：命令行解析与快捷键解析
+- **宿主半**（`src/index.ts`）：Cordis 插件入口，注册路由、管理 node-pty 进程、WebSocket 升级与数据转发、settings 集成
+- **浏览器半**（`src/client.tsx`）：React 组件，xterm.js 底部面板，多 tab 管理、快捷键、拖拽调高、剪贴板
+- **持久化层**（`src/persistence.ts`）：`SessionStore` 封装会话日志落盘/清理、元数据读写、启动恢复
+- **平台适配层**（`src/platform.ts`）：`PlatformAdapter` 接口与 POSIX/Windows 适配器，封装 OS 差异
+- **常量**（`src/constants.ts`）：协议前缀、尺寸约束、快捷键默认值、环境变量名等具名常量
+- **工具函数**（`src/server-command.ts`、`src/shortcut.ts`、`src/logger.ts`）：命令行解析、快捷键解析、统一日志
 
 **插件形态必须构建**：dsh loader 经纯 ESM import 加载插件、不走 tsx，所以必须用 `scripts/build.ts` 产出 `lib/` 构建产物。`lib/` 纳入版本控制——pnpm 11 对声明了安装类脚本的 git-hosted 包直接报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，且只看 `package.json` 字段、不看脚本内容做什么，所以本仓库**不声明任何生命周期脚本**（`prepare`/`postinstall` 都没有）。构建由开发者手动 `pnpm run build` 完成，产物 `lib/` 随源码一起提交。
 
@@ -48,13 +51,17 @@ pnpm exec tsx --test tests/unit/*.test.ts
 
 ```
 src/
-├── index.ts           # 宿主半入口（cordis 插件：apply/inject/name + 路由 + pty 管理 + WebSocket）
-├── client.tsx          # 浏览器半入口（xterm 底部面板 + 多 tab + 快捷键 + 拖拽调高）
+├── index.ts           # 宿主半入口（cordis 插件：apply/inject/name + 路由分发 + pty 生命周期 + WebSocket 升级 + settings 集成）
+├── client.tsx          # 浏览器半入口（xterm 底部面板 + 多 tab + 快捷键 + 拖拽调高 + 剪贴板 + 自定义 Hooks）
+├── persistence.ts      # 会话持久化层（SessionStore：日志落盘/清理、元数据读写、启动恢复）
+├── platform.ts         # 平台适配层（PlatformAdapter 接口 + POSIX/Windows 适配器 + envPick）
+├── constants.ts        # 协议/尺寸/快捷键/环境变量/文件名常量
 ├── server-command.ts   # 命令行解析工具（shell 命令拆分与转义）
-└── shortcut.ts         # 快捷键解析工具（toggle 快捷键字符串 → KeyboardEvent 匹配）
+├── shortcut.ts         # 快捷键解析工具（toggle 快捷键字符串 → KeyboardEvent 匹配）
+└── logger.ts           # 统一日志工具（createLogger：结构化 [时间戳][级别][模块] 内容）
 ```
 
-依赖方向：`index.ts` 依赖 `server-command.ts` 与 `shortcut.ts`；`client.tsx` 独立运行在浏览器侧。两半经 WebSocket 通信，路由前缀 `/api/dsh-remote-terminal`。
+依赖方向：`index.ts` 依赖 `constants.ts`、`platform.ts`、`persistence.ts`、`server-command.ts`、`logger.ts`；`persistence.ts` 依赖 `constants.ts` 与 `logger.ts`；`client.tsx` 依赖 `shortcut.ts` 与 `logger.ts`，独立运行在浏览器侧。两半经 WebSocket 通信，路由前缀 `/api/dsh-remote-terminal`。
 
 ## 经验教训与硬约束
 
