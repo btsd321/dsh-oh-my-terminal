@@ -231,9 +231,10 @@ const del = (path: string): Promise<void> =>
     .then(() => { /* 删除成功，无需处理 */ })
     .catch(() => { /* 会话可能已删，幂等 */ });
 
-/** 把 shell 名里的 .exe 后缀去掉，做显示用 */
+/** 把 shell 完整路径取文件名并去掉 .exe 后缀，做显示用 */
 function prettyShell(s: string | undefined): string {
-  return (s ?? 'shell').replace(/\.exe$/i, '');
+  const base = (s ?? 'shell').replace(/^.*[/\\]/, '');
+  return base.replace(/\.exe$/i, '');
 }
 
 /**
@@ -497,8 +498,18 @@ function TermPane(props: TermPaneProps): ReactElement {
     termRef.current = term;
     fitRef.current = fit;
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(proto + '//' + window.location.host + PREFIX + '/ws/' + tab.id);
+    /*
+     * DSH 桌面端页面运行在自定义协议 dsh-app://app/ 下，window.location.host
+     * 返回 "app" 而非实际后端地址。DSH 通过 window.__DSH_TRANSPORT__.streamBaseUrl
+     * 注入真实后端 HTTP origin（如 http://127.0.0.1:19387），Gateway 的 WebSocket
+     * 也用此 origin。回退到 window.location.origin 兼容纯浏览器部署。
+     */
+    const transportGlobals = globalThis as { __DSH_TRANSPORT__?: { streamBaseUrl?: string } };
+    const wsOrigin = transportGlobals.__DSH_TRANSPORT__?.streamBaseUrl ?? window.location.origin;
+    const wsProto = wsOrigin.startsWith('https') ? 'wss:' : 'ws:';
+    const wsHost = wsOrigin.replace(/^https?:\/\//, '');
+    const wsUrl = wsProto + '//' + wsHost + PREFIX + '/ws/' + tab.id;
+    const ws = new WebSocket(wsUrl);
     ws.onopen = () => {
       /* 挂载 effect 的 fit() 在 rAF 里跑，可能先于 socket 打开——此时 onResize 被
        * 丢弃（readyState !== OPEN），PTY 停在生成默认值（80x24）。连接后重放当前
@@ -677,13 +688,11 @@ function TermPane(props: TermPaneProps): ReactElement {
 
 // —— TerminalPanel 组件（主面板） ——
 
-/** TerminalPanel 的 props（从 dsh 框架注入） */
+/** TerminalPanel 的 props（从 dsh 框架 slot 系统注入） */
 interface TerminalPanelProps {
-  /** 当前 dsh 会话 id（新建 tab 时传给宿主半回查工作区） */
+  /** 当前 dsh 会话 id（SessionStandardProps，scope='session' 自动注入） */
   sessionId?: string;
-  /** dsh 会话状态选择器（读取 cwd） */
-  useSessions?: <T,>(selector: (s: unknown) => T) => T;
-  /** dsh 工作区状态选择器（读取工作区路径） */
+  /** dsh 工作区状态选择器（GlobalStandardProps，所有 slot 自动注入） */
   useWorkspaces?: <T,>(selector: (s: unknown) => T) => T;
 }
 
@@ -696,37 +705,21 @@ interface TerminalPanelProps {
  */
 function TerminalPanel(props: TerminalPanelProps): ReactElement {
   const { useEffect, useRef, useState, useCallback, useLayoutEffect } = React;
-  const { sessionId, useSessions, useWorkspaces } = props ?? {};
+  const { sessionId, useWorkspaces } = props ?? {};
 
   /** 面板是否展开 */
   const [open, setOpen] = useState(false);
   /*
-   * 本面板挂载所在的 DSH 会话的 cwd。优先工作区成员（用户屏幕所见——会话所在的
-   * 工作区），然后会话摘要 cwd，再然后父会话 cwd（子 agent 行无自身 cwd）。新 tab
-   * 在此生成而非服务端 process.cwd()，使服务重启不再把新终端困在启动目录。所属
-   * sessionId 也随每次创建请求发送，宿主半在所有客户端查询落空时回退到工作区注册表。
+   * 本面板挂载所在的 DSH 会话的工作区路径。通过 useWorkspaces（GlobalStandardProps）
+   * 查找当前 sessionId 所属的工作区，取其 path 作为新终端的 cwd。宿主半在客户端 cwd
+   * 查询落空时回退到 workspaceRegistry 或 process.cwd()。
    */
-  const workspacePath = useWorkspaces?.((s: unknown) => {
+  const workspaceCwd = useWorkspaces?.((s: unknown) => {
     const state = s as { items?: Array<{ sessionIds?: string[]; path?: string }> };
-    return Array.isArray(state?.items)
-      ? state.items.find(w => Array.isArray(w?.sessionIds) && w.sessionIds.includes(sessionId ?? ''))?.path
-      : undefined;
+    if (!Array.isArray(state?.items) || typeof sessionId !== 'string') return undefined;
+    const ws = state.items.find(w => Array.isArray(w?.sessionIds) && w.sessionIds.includes(sessionId));
+    return typeof ws?.path === 'string' && ws.path.length > 0 ? ws.path : undefined;
   });
-  const sessionCwd = useSessions?.((s: unknown) => {
-    const state = s as {
-      byId?: Record<string, { cwd?: string; parentId?: string }>;
-    };
-    const row = state?.byId?.[sessionId ?? ''];
-    if (typeof row?.cwd === 'string' && row.cwd.length > 0) return row.cwd;
-    if (typeof row?.parentId === 'string') {
-      const parent = state.byId?.[row.parentId];
-      if (typeof parent?.cwd === 'string' && parent.cwd.length > 0) return parent.cwd;
-    }
-    return undefined;
-  });
-  const workspaceCwd = typeof workspacePath === 'string' && workspacePath.length > 0
-    ? workspacePath
-    : sessionCwd;
 
   /** tabs: [{id, title, shell, cwd, exited}] 按 strip 顺序 */
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
@@ -763,42 +756,40 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   const [geo, setGeo] = useState<ConversationGeo>({ left: 0, width: window.innerWidth });
 
   /*
-   * 终端 bar/panel 固定在视口底部；持有 textarea 的 composer 卡片获得等于面板高度
-   * 的 margin-bottom，使输入框始终在终端上方——折叠 bar（34px）和展开面板 alike。
+   * 终端 bar/panel 固定在视口底部；对话滚动容器（[data-conversation-scroll]）获得等于
+   * 面板高度的 paddingBottom，使 composer 座位（sticky 或 absolute）和上方的 dock
+   * 条目（GoalBar / TodoDock 等）整体上移，不被 fixed 终端面板遮挡。
+   *
+   * 为什么用 scrollBody 的 paddingBottom 而非 composerSeat 的 marginBottom：
+   * - composer overlay 模式下 composerSeat 是 position:absolute; bottom:0，
+   *   marginBottom 不改变 absolute 元素的 bottom 锚点位置
+   * - paddingBottom 加在滚动容器上，无论子元素是 sticky 还是 absolute 都生效
    */
   useLayoutEffect(() => {
     const rootEl = rootRef.current;
     if (rootEl === null) return;
-    const host = (): HTMLElement => rootEl.closest('[data-conversation-scroll]') ?? rootEl.parentElement as HTMLElement;
-    const findComposer = (): HTMLElement | null => {
-      let el: HTMLElement | null = rootEl.parentElement;
-      while (el !== null && el !== document.body) {
-        if (el.querySelector('textarea') !== null) return el;
-        el = el.parentElement;
-      }
-      return null;
+    const findScrollBody = (): HTMLElement | null => {
+      return rootEl.closest('[data-conversation-scroll]');
     };
-    let card: HTMLElement | null = null;
+    let scrollBody: HTMLElement | null = null;
     const measure = (): void => {
-      const el = host();
-      if (el !== null) {
-        const r = el.getBoundingClientRect();
+      if (scrollBody !== null) {
+        const r = scrollBody.getBoundingClientRect();
         setGeo({ left: r.left, width: r.width });
       }
       const h = Math.round(rootEl.getBoundingClientRect().height);
-      if (card !== null) card.style.marginBottom = h > 0 ? h + 'px' : '';
+      if (scrollBody !== null) scrollBody.style.paddingBottom = h > 0 ? h + 'px' : '';
     };
-    card = findComposer();
-    const el = host();
+    scrollBody = findScrollBody();
     const ro = new ResizeObserver(measure);
-    if (el !== null) ro.observe(el);
+    if (scrollBody !== null) ro.observe(scrollBody);
     ro.observe(rootEl);
     window.addEventListener('resize', measure);
     measure();
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', measure);
-      if (card !== null) card.style.marginBottom = '';
+      if (scrollBody !== null) scrollBody.style.paddingBottom = '';
     };
   }, []);
 
