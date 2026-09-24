@@ -16,7 +16,7 @@
  *   内容持久化，不进 logger；logger 只记元数据写入失败等生命周期事件。
  */
 
-import type { IPty } from 'node-pty';
+import type { IPty } from '@lydell/node-pty';
 import type { WebSocket } from 'ws';
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
@@ -45,7 +45,7 @@ export interface PersistedMeta {
 export interface SessionRecord {
   /** 进程内单调 id（t1-<uuid> 格式，不可猜测） */
   id: string;
-  /** node-pty 实例；已退出时为 null */
+  /** 来自 @lydell/node-pty 的实例；已退出时为 null */
   pty: IPty | null;
   /** shell 可执行文件路径 */
   shell: string;

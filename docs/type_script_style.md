@@ -19,7 +19,7 @@
 ```typescript
 /**
  * @file 宿主半终端管理模块
- * @description 管理 node-pty 进程的创建、销毁与 WebSocket 数据转发。
+ * @description 管理 @lydell/node-pty 进程的创建、销毁与 WebSocket 数据转发。
  *              pty 进程与 WebSocket 一一绑定，面板关闭时同时销毁两者。
  *
  * 安全约束：
@@ -136,7 +136,7 @@ private assertAlive(): void {
 - **与外部系统的契约**——写清对方的行为
 
   ```typescript
-  // node-pty 的 onData 回调在进程输出时触发，高频调用
+  // @lydell/node-pty 的 onData 回调在进程输出时触发，高频调用
   // xterm.js 的 write 接受 Uint8Array 或 string，二进制帧用 Uint8Array 更高效
   ```
 
@@ -190,10 +190,10 @@ export type { ParsedShortcut } from './shortcut.js';
 - Node 内置模块带 `node:` 前缀：`node:fs`、`node:path`、`node:crypto`
 - 只用于类型的导入写 `import type`
 - 导入顺序：第三方 → Node 内置 → 本仓库模块
-- 避免运行时动态 `import()`，除非确实要延迟加载重依赖并在注释里说明原因
+- 避免运行时动态 `import()`，除非确实要延迟加载重依赖并在注释里说明原因。本仓库唯一的例外是宿主半的 `@lydell/node-pty`：它带原生绑定，顶层静态导入一旦失败会让整个模块在求值期不可导入，懒加载把失败收敛到会话创建那一步
 
 ```typescript
-import { spawn } from 'node-pty';
+// @lydell/node-pty 是上面那条的例外：懒加载，故不出现在导入块里
 import { WebSocketServer } from 'ws';
 import { readFileSync } from 'node:fs';
 import { parseShortcut } from './shortcut.js';
@@ -353,11 +353,11 @@ get currentSession(): TerminalSession | undefined {
 
 ## 七、工程化约束
 
-1. **插件形态必须构建。** dsh loader 经纯 ESM import 加载插件、不走 tsx，所以必须用 `scripts/build.ts` 产出 `lib/`（含 `index.js` + `client.js` + `xterm.css`）。`lib/` 纳入版本控制——**禁止声明生命周期脚本**（`prepare`/`postinstall` 等一概不加），pnpm 11 对声明了安装类脚本的 git-hosted 包直接报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，拦截只看 `package.json` 字段、不看脚本内容。构建由开发者手动 `pnpm run build`，产物随源码一起提交。
+1. **插件形态必须构建。** dsh loader 经纯 ESM import 加载插件、不走 tsx，所以必须用 `scripts/build.ts` 产出 `lib/`（含 `index.js` + `client.js` + `xterm.css`）。`lib/` 纳入版本控制——**禁止声明生命周期脚本**（`prepare`/`postinstall` 等一概不加），pnpm 11 对声明了安装类脚本的 git-hosted 包直接报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，拦截只看 `package.json` 字段、不看脚本内容。选依赖同理——`@lydell/node-pty` 的 `package.json` 连 `scripts` 字段都不存在，pnpm 10/11/12 都不会对它做构建授权判断。构建由开发者手动 `pnpm run build`，产物随源码一起提交。
 2. **改代码后跑类型检查**：`pnpm run typecheck`。不要让类型错误总数变多。
 3. **新增运行时依赖必须写进 `package.json`**，版本锁定或用窄范围。`node_modules` 里有不等于已声明。
 4. **协议与命名常量不可单方面修改**：路由前缀（`/api/dsh-remote-terminal`）、slash 命令名、插件 id 改动必须同步 cordis.patch.yml 与构建脚本，并在注释里标明兼容性影响。
-5. **跨平台**：node-pty 自动按平台选 ConPTY（Windows）或 openpty（POSIX），不需要手动处理平台差异。
+5. **跨平台**：`@lydell/node-pty` 自动按平台选 ConPTY（Windows）或 openpty（POSIX），不需要手动处理平台差异。该包版本精确钉在 `1.1.0`（上游 `latest` 指向 beta），六个平台子包自带 N-API 二进制，安装期不编译。
 6. **不落明文凭据**：日志和错误消息不打印密钥、口令内容。
 7. **终端数据绝不进日志**：pty 输出与 WebSocket 数据帧是用户会话内容，不写日志。
 8. **日志统一使用 `src/logger.ts` 的 `createLogger`**。不直接调用 `console.*`。
