@@ -253,17 +253,19 @@ export function useSessionRestore(): SessionRestore {
       setBusy(true);
       try {
         const list = await api<SessionsResponse>('/sessions');
-        /* 恢复宿主仍知的所有会话：存活 PTY 与已退出历史（跨 dsh web 重启持久化）。
-         * 已退出实例经 WS 回放滚动缓冲并显示为可重启。 */
+        /* 只恢复存活的 PTY 会话——已退出的历史不恢复。
+         * DSH 重启后旧 PTY 已死，恢复已退出会话只会显示横杠，
+         * 不如让首次打开逻辑自动创建全新终端。 */
         const all = list.sessions ?? [];
-        if (all.length > 0) {
-          // 1. 将每个 SessionEntry 映射为 TerminalInstance
-          const restoredInstances: TerminalInstance[] = all.map((x: SessionEntry): TerminalInstance => ({
+        const live = all.filter(x => !x.exited);
+        if (live.length > 0) {
+          // 1. 将每个存活 SessionEntry 映射为 TerminalInstance
+          const restoredInstances: TerminalInstance[] = live.map((x: SessionEntry): TerminalInstance => ({
             id: x.id,
             title: x.title,
             shell: x.shell,
             cwd: typeof x.cwd === 'string' ? x.cwd : null,
-            exited: !!x.exited,
+            exited: false,
           }));
           setInstances(restoredInstances);
 
@@ -275,9 +277,8 @@ export function useSessionRestore(): SessionRestore {
           }));
           setGroups(restoredGroups);
 
-          // 3. 激活最后一个存活实例；全部已退出则激活最后一个
-          const lastLive = [...all].reverse().find(x => !x.exited);
-          setActiveInstanceId((lastLive ?? all[all.length - 1]).id);
+          // 3. 激活最后一个存活实例
+          setActiveInstanceId(live[live.length - 1].id);
         }
       } catch (err) {
         log.error('恢复会话失败', err);
