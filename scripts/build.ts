@@ -4,13 +4,14 @@
  *              并从 node_modules 复制 xterm.css 到 lib/xterm.css 供宿主半 serve。
  *
  * 构建产物说明：
- * - lib/index.js：宿主半（ESM/Node），external 排除 @deepseek-ai/*、node-pty、ws 等原生依赖
+ * - lib/index.js：宿主半（ESM/Node），external 排除 @deepseek-ai/*、@lydell/node-pty、ws 等原生依赖
  * - lib/client.js：浏览器半（CJS/browser），用 __ModuleLoader__ 注册壳包裹，external 排除 react
  * - lib/xterm.css：从 @xterm/xterm 复制的样式表，由宿主半 serve 给浏览器
  *
  * 约束：
- * - node-pty 含原生 .node 二进制，单文件 bundle 带不走，用 .node: empty loader 让 ssh2 的
- *   try/catch 回落纯 JS（此处为保持一致性同样处理）
+ * - @lydell/node-pty 含原生 .node 二进制，单文件 bundle 带不走，必须留作外部引用（运行期由
+ *   node_modules 里的平台子包提供绑定）；另用 .node: empty loader 让 ssh2 的 try/catch 回落纯 JS
+ *   （此处为保持一致性同样处理）
  * - lib/ 纳入版本控制，构建后需手动 git add 提交
  */
 
@@ -32,7 +33,7 @@ await build({
   outfile: join(LIB, 'index.js'),
   format: 'esm', platform: 'node', target: 'node20',
   bundle: true,
-  external: ['@deepseek-ai/*', 'node-pty', 'ws', 'cpu-features', 'nan'],
+  external: ['@deepseek-ai/*', '@lydell/node-pty', 'ws', 'cpu-features', 'nan'],
   loader: { '.node': 'empty' },
 });
 

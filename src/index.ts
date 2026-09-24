@@ -3,13 +3,15 @@
  * @description 独立 dsh 插件 `dsh-oh-my-terminal` 的宿主入口。用户通过
  *              `dsh plugin --profile web add dsh-oh-my-terminal` 安装本插件后，
  *              在远端 dsh 的 webServer 上注册 HTTP 前缀路由和 per-session WebSocket
- *              升级路由，用 node-pty 管理 PTY shell 会话。终端数据经 WebSocket
+ *              升级路由，用 node-pty（经 @lydell/node-pty 分发）管理 PTY shell
+ *              会话。终端数据经 WebSocket
  *              实时双向传输（不经 SSH 通道）。支持会话持久化（dsh 重启后恢复历史
  *              tab）、可配置 shell 命令、终端种类选择接口。
  *
- *              独立插件形态（非合成包）：node-pty/ws 是 package.json 的正常依赖，
- *              pnpm install 时装进 node_modules；import 直接引真实包，无需
- *              declare module 占位。xterm.css 从 node_modules 读取并 serve。
+ *              独立插件形态（非合成包）：@lydell/node-pty 与 ws 是 package.json
+ *              的正常依赖，pnpm install 时装进 node_modules；xterm.css 从
+ *              node_modules 读取并 serve。node-pty 含平台原生绑定，采用运行期
+ *              懒加载（见 loadPty），避免绑定缺失时整个插件入口不可导入。
  *
  *              职责拆分：协议/尺寸/快捷键/环境变量常量在 {@link module:constants}，
  *              平台适配器在 {@link module:platform}，会话持久化（日志落盘、
@@ -40,9 +42,7 @@ import type { Context } from '@deepseek-ai/cordis';
 // schemastery 是 dsh 的 peer 依赖；esbuild external 后运行期从 profile 解析。
 // 用值导入——settings schema 注册需要运行时调用 z.string()/z.object()
 import z from '@deepseek-ai/schemastery';
-// 独立插件有真实 node_modules——直接 import node-pty 与 ws，无需 declare module 占位
 // WebSocket 需作为值导入：ws.readyState === WebSocket.OPEN 用到其静态常量
-import { spawn } from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -61,6 +61,53 @@ import { SessionStore } from './persistence.js';
 import type { SessionRecord } from './persistence.js';
 
 const log = createLogger('terminal-host');
+
+// —— 原生绑定懒加载 ——
+
+/** 终端操作错误：保留错误码，便于调用方区分失败原因 */
+export class TerminalError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+    this.name = 'TerminalError';
+  }
+}
+
+/** node-pty 模块类型（值与类型都从真实包解析，不手写第二份） */
+type PtyModule = typeof import('@lydell/node-pty');
+
+/** 已加载的 node-pty 模块缓存；undefined 表示尚未尝试加载 */
+let ptyModule: PtyModule | undefined;
+
+/**
+ * 懒加载 node-pty 模块（@lydell/node-pty）。
+ *
+ * 为什么用运行时动态 import 而不在文件顶部静态导入：该包含平台原生绑定
+ * （.node 二进制），静态导入会把绑定缺失的异常提前到 ESM 模块求值阶段，
+ * 导致整个插件入口不可导入、dsh 报 "failed to import"、插件连 apply 都
+ * 执行不到。改成按需加载后，绑定缺失降级为「创建会话时报错」，插件本身
+ * 仍能正常启用（type_script_style.md 的动态 import 例外条款正是为此场景）。
+ *
+ * 加载成功后缓存模块引用。失败不额外缓存：Node 的 ESM 加载器本身会把求值
+ * 失败的模块标记为 errored，后续 import 同一 specifier 直接以同一错误拒绝，
+ * 因此重复调用不会产生额外开销，也不会因重试而误判为可用。
+ *
+ * @returns node-pty 模块
+ * @throws TerminalError('PTY_UNAVAILABLE') 平台缺少预编译绑定或模块缺失
+ */
+async function loadPty(): Promise<PtyModule> {
+  if (ptyModule !== undefined) return ptyModule;
+  try {
+    ptyModule = await import('@lydell/node-pty');
+    return ptyModule;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new TerminalError(
+      `终端原生绑定加载失败（平台 ${process.platform}-${process.arch}）：` +
+      `${msg}。该平台可能没有预编译二进制，请确认 @lydell/node-pty 的对应该平台子包已随依赖安装。`,
+      'PTY_UNAVAILABLE',
+    );
+  }
+}
 
 // —— webServer 类型增广 ——
 
@@ -456,8 +503,9 @@ export function apply(ctx: Context): void {
    *
    * @param options - 创建参数
    * @returns 会话记录
+   * @throws TerminalError('PTY_UNAVAILABLE') 原生绑定不可用（平台缺预编译二进制）
    */
-  function createSession(options: {
+  async function createSession(options: {
     cols?: number;
     rows?: number;
     cwd?: string;
@@ -465,7 +513,7 @@ export function apply(ctx: Context): void {
     cmdline?: string;
     seed?: string;
     sessionId?: string;
-  }): SessionRecord {
+  }): Promise<SessionRecord> {
     const cols = options.cols ?? DEFAULT_COLS;
     const rows = options.rows ?? DEFAULT_ROWS;
     const { file, args, cmdline: effectiveCmdline } = resolveSpawn(
@@ -474,7 +522,9 @@ export function apply(ctx: Context): void {
     const id = makeId();
     const sessionCwd = resolveSessionCwd(options.cwd, options.sessionId, workspaceRegistry);
 
-    // node-pty 返回 IPty 实例
+    // 懒加载原生绑定：失败时抛 TerminalError，由路由层转成 HTTP 500 中文提示
+    const { spawn } = await loadPty();
+
     const pty = spawn(file, args, {
       name: platform.ptyName,
       cols,
@@ -566,7 +616,7 @@ export function apply(ctx: Context): void {
    * @param cwd - 可选的新工作目录（未传时继承旧会话的）
    * @returns 新会话记录
    */
-  function restartSession(id: string, cwd?: string): SessionRecord | undefined {
+  async function restartSession(id: string, cwd?: string): Promise<SessionRecord | undefined> {
     const old = sessions.get(id);
     if (old === undefined) return undefined;
     const seed = old.buffer;
@@ -593,7 +643,7 @@ export function apply(ctx: Context): void {
     log.info(`重启会话 ${id}（继承 ${seed.length} 字符缓冲）`);
 
     // 创建新会话——有 cmdline 时重跑原命令，否则用裸 shell 文件
-    const fresh = createSession({
+    const fresh = await createSession({
       ...(typeof old.cmdline === 'string' && old.cmdline.length > 0 ? { cmdline: old.cmdline } : { shell: file }),
       cwd: requestedCwd,
       seed,
@@ -638,7 +688,7 @@ export function apply(ctx: Context): void {
         // POST /sessions — 创建新终端会话
         if (rest === '/sessions' && method === 'POST') {
           const body = await readBody(req);
-          const record = createSession({
+          const record = await createSession({
             cols: clampInt(body.cols, COLS_MIN, COLS_MAX, DEFAULT_COLS),
             rows: clampInt(body.rows, ROWS_MIN, ROWS_MAX, DEFAULT_ROWS),
             cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
@@ -705,7 +755,7 @@ export function apply(ctx: Context): void {
         // POST /sessions/:id/restart — 重启（继承滚动缓冲）
         if (action === 'restart' && method === 'POST') {
           const body = await readBody(req);
-          const fresh = restartSession(id, typeof body.cwd === 'string' ? body.cwd : undefined);
+          const fresh = await restartSession(id, typeof body.cwd === 'string' ? body.cwd : undefined);
           if (fresh === undefined) {
             json(res, 404, { error: 'no such session' });
             return;
