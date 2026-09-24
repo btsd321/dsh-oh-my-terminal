@@ -135,6 +135,21 @@ function makeId(): string {
 }
 
 /**
+ * 判断路径是否是 DSH 默认工作区目录。
+ *
+ * DSH 自动创建的默认工作区目录名固定为 "默认工作区"（中文）或 "Default Workspace"（英文），
+ * 位于 Documents/deepseek-harness/ 下。该目录是 DSH 内部数据目录，不适合作为终端工作目录，
+ * 终端应在用户家目录（~）启动。
+ *
+ * @param path - 待检查的路径
+ * @returns 是否是默认工作区目录
+ */
+function isDefaultWorkspace(path: string): boolean {
+  const lastSegment = path.replace(/[/\\]+$/, '').replace(/^.*[/\\]/, '');
+  return lastSegment === '默认工作区' || lastSegment.toLowerCase() === 'default workspace';
+}
+
+/**
  * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 查 sessionId → 用户家目录兜底。
  *
  * 默认工作区会话没有绑定具体项目目录，此时终端应在用户家目录（~）启动，
@@ -151,13 +166,13 @@ function resolveSessionCwd(
   workspaceRegistry: unknown,
 ): string {
   const candidates: string[] = [];
-  if (typeof cwd === 'string' && cwd.length > 0) candidates.push(cwd);
+  if (typeof cwd === 'string' && cwd.length > 0 && !isDefaultWorkspace(cwd)) candidates.push(cwd);
   if (typeof sessionId === 'string' && sessionId.length > 0 && workspaceRegistry !== undefined) {
     try {
       // workspaceRegistry.host.sessionPath(sessionId) 返回工作区路径——dsh-workspace 服务提供
       const reg = workspaceRegistry as { host?: { sessionPath?: (id: string) => string | undefined } };
       const path = reg.host?.sessionPath?.(sessionId);
-      if (typeof path === 'string' && path.length > 0) candidates.push(path);
+      if (typeof path === 'string' && path.length > 0 && !isDefaultWorkspace(path)) candidates.push(path);
     } catch {
       /* workspace 服务不存在或未就绪——降级到下一候选 */
     }

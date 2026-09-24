@@ -133,14 +133,21 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   const [open, setOpen] = useState(false);
   /*
    * 本面板挂载所在的 DSH 会话的工作区路径。通过 useWorkspaces（GlobalStandardProps）
-   * 查找当前 sessionId 所属的工作区，取其 path 作为新终端的 cwd。宿主半在客户端 cwd
-   * 查询落空时回退到 workspaceRegistry 或 process.cwd()。
+   * 查找当前 sessionId 所属的工作区，取其 path 作为新终端的 cwd。
+   *
+   * 默认工作区（DSH 自动创建的 "默认工作区" / "Default Workspace"）强制不传 cwd，
+   * 让宿主半兜底到用户家目录（~）——默认工作区的实际目录是 DSH 内部数据目录，
+   * 不适合作为终端工作目录。中英文目录名都匹配。
    */
   const workspaceCwd = useWorkspaces?.((s: unknown) => {
     const state = s as { items?: Array<{ sessionIds?: string[]; path?: string }> };
     if (!Array.isArray(state?.items) || typeof sessionId !== 'string') return undefined;
     const ws = state.items.find(w => Array.isArray(w?.sessionIds) && w.sessionIds.includes(sessionId));
-    return typeof ws?.path === 'string' && ws.path.length > 0 ? ws.path : undefined;
+    if (typeof ws?.path !== 'string' || ws.path.length === 0) return undefined;
+    // 默认工作区路径最后一段匹配中英文 → 不传 cwd，让宿主半用 ~
+    const lastSegment = ws.path.replace(/[/\\]+$/, '').replace(/^.*[/\\]/, '');
+    if (lastSegment === '默认工作区' || lastSegment.toLowerCase() === 'default workspace') return undefined;
+    return ws.path;
   });
 
   /* —— 拖拽调高（高度 state + localStorage 持久化） —— */
