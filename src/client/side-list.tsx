@@ -103,6 +103,8 @@ export function SideList(props: SideListProps): ReactElement {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; instanceId: string } | null>(null);
   /** 重命名 input ref（自动聚焦） */
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  /** 右键菜单容器 ref（用于判断点击是否在菜单内部） */
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
   /* 重命名 input 挂载时自动聚焦并全选 */
   useEffect(() => {
@@ -112,10 +114,14 @@ export function SideList(props: SideListProps): ReactElement {
     }
   }, [renamingId]);
 
-  /* 点击外部关闭右键菜单 */
+  /* 点击外部关闭右键菜单（点击菜单内部不关闭，让 click 事件正常触发） */
   useEffect(() => {
     if (contextMenu === null) return;
-    const onClickOutside = (): void => setContextMenu(null);
+    const onClickOutside = (e: MouseEvent): void => {
+      const menu = contextMenuRef.current;
+      if (menu !== null && menu.contains(e.target as Node)) return;
+      setContextMenu(null);
+    };
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [contextMenu]);
@@ -281,6 +287,7 @@ export function SideList(props: SideListProps): ReactElement {
         'div',
         {
           className: 'dshTermContextMenu',
+          ref: contextMenuRef,
           style: { left: contextMenu.x + 'px', top: contextMenu.y + 'px' },
         },
         React.createElement(
