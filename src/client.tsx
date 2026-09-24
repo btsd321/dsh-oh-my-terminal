@@ -16,6 +16,18 @@
  * - 快捷键切换（默认 Ctrl+`，从 /config 读取）
  * - 多 tab：+ 新建、✕ 关闭、⟳ 重启；切 tab 不中断进程
  * - 会话恢复：挂载时 GET /sessions 恢复所有 tab（含已退出的历史）
+ *
+ * 模块结构（按关注点拆分，消除 God Component）：
+ * - `legacyCopy` / `writeClipboard` — 剪贴板纯函数（Async Clipboard API + legacy 回落）
+ * - `createClipboardHandlers(term)` — 为终端创建选中复制/右键粘贴/Ctrl+Shift+C/V 处理集
+ * - `TermPane` — 单终端面板（xterm + WebSocket + resize 生命周期）
+ * - `RestartButton` — 重启按钮子组件（展开态/折叠态共用）
+ * - `usePanelHeight` — 拖拽调高 + localStorage 持久化
+ * - `usePanelGeometry` — 对话列几何测量 + scrollBody paddingBottom
+ * - `useSessionRestore` — 挂载拉取 /sessions 恢复 tabs
+ * - `usePanelShortcut` — 拉取 /config 配置快捷键 + 全局 keydown 监听
+ * - `useTerminalTabs` — tabs CRUD（新建/关闭/重启/退出标记）
+ * - `TerminalPanel` — 组合上述 Hook + 渲染 JSX 的壳
  */
 
 import * as React from 'react';
@@ -82,6 +94,15 @@ const STYLE_TAG = 'dsh-remote-terminal-styles';
 
 /** 默认面板高度占视口的百分比（首次无 localStorage 时） */
 const DEFAULT_HEIGHT_RATIO = 0.36;
+
+/** xterm 字号（像素）——TUI agent 输出密度与可读性的折中 */
+const TERM_FONT_SIZE = 12.5;
+
+/** xterm 行高倍数——紧凑但不挤行 */
+const TERM_LINE_HEIGHT = 1.25;
+
+/** xterm 滚动缓冲行数——agent 会话有大量工具输出，需要较长历史 */
+const TERM_SCROLLBACK = 10_000;
 
 // —— CSS 注入（模块级幂等） ——
 
@@ -423,6 +444,131 @@ function Plus12(): ReactElement {
   );
 }
 
+// —— 剪贴板纯函数（模块级，可独立测试） ——
+
+/*
+ * Xshell/PuTTY 风格剪贴板访问双层降级：
+ * - navigator.clipboard（Async Clipboard API）快但仅安全上下文（https 或
+ *   http://localhost/127.0.0.1）存在。从其他机器经纯 http 打开 GUI——「远程」
+ *   场景——它是 undefined 且任何调用抛错。复制因此回落到 legacy
+ *   document.execCommand("copy")（经临时 textarea），在不安全上下文也工作。
+ * - 读剪贴板没有不安全上下文回落 API，故 navigator.clipboard 缺失时不吞原生
+ *   右键菜单：其「粘贴」项喂给聚焦的 xterm textarea，xterm 自身的 paste 事件
+ *   转发文本进 shell。Ctrl+V 在终端内各上下文都那样工作。
+ */
+
+/**
+ * 旧式复制：经临时 textarea + document.execCommand('copy')。
+ *
+ * Async Clipboard API 缺失或失败时（不安全上下文 / 远程 http）的回落路径。
+ *
+ * @param text - 待复制文本
+ * @returns 是否成功
+ */
+function legacyCopy(text: string): boolean {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+/**
+ * 写剪贴板：优先 Async Clipboard API，失败回落 legacyCopy。
+ *
+ * @param text - 待写入文本
+ */
+function writeClipboard(text: string): void {
+  if (typeof navigator.clipboard?.writeText === 'function') {
+    navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+  } else {
+    legacyCopy(text);
+  }
+}
+
+/** createClipboardHandlers 返回的剪贴板事件处理集合 */
+interface ClipboardHandlers {
+  /** 鼠标释放复制选区（仅左键） */
+  copySelection: (ev: MouseEvent) => void;
+  /** 右键粘贴剪贴板（不安全上下文降级） */
+  pasteClipboard: (ev: MouseEvent) => void;
+  /** Ctrl+Shift+C/V 自定义按键处理（返回 false 拦截） */
+  onCustomKey: (ev: KeyboardEvent) => boolean;
+}
+
+/**
+ * 为指定终端创建剪贴板事件处理集合。
+ *
+ * 不直接挂监听——调用方（TermPane 挂载 effect）负责将返回的 handler 挂到
+ * `term.element` 与 `term.attachCustomKeyEventHandler`，并在清理时移除。
+ *
+ * @param term - xterm Terminal 实例
+ * @returns 三个剪贴板事件处理函数
+ */
+function createClipboardHandlers(term: Terminal): ClipboardHandlers {
+  const copySelection = (ev: MouseEvent): void => {
+    /* 仅左键释放：右键是粘贴，不重复复制 */
+    if (ev.button !== 0) return;
+    if (!term.hasSelection()) return;
+    const text = term.getSelection();
+    if (text.length === 0) return;
+    writeClipboard(text);
+  };
+  const pasteClipboard = (ev: MouseEvent): void => {
+    if (typeof navigator.clipboard?.readText !== 'function') {
+      /* 不安全上下文（远程 http / iframe 权限策略）：让浏览器原生右键菜单显示——
+       * 其「粘贴」项到达聚焦的 xterm textarea 并粘贴进 shell */
+      return;
+    }
+    ev.preventDefault();
+    navigator.clipboard
+      .readText()
+      .then((text: string) => {
+        if (text.length > 0) term.paste(text);
+      })
+      .catch(() => {
+        /* 权限拒绝；Ctrl+V 仍原生粘贴 */
+      });
+  };
+  /* VS Code 风格 Ctrl+Shift+C / Ctrl+Shift+V——仅在 Async Clipboard API 存在时
+   * （安全上下文）尝试；按键绝不到达 shell，故 Ctrl+C 保持 SIGINT、Ctrl+V 保持
+   * 原生粘贴。 */
+  const onCustomKey = (ev: KeyboardEvent): boolean => {
+    if (ev.type !== 'keydown') return true;
+    if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return true;
+    const k = ev.key.toLowerCase();
+    if (k === 'c') {
+      if (typeof navigator.clipboard?.writeText === 'function' && term.hasSelection()) {
+        writeClipboard(term.getSelection());
+      }
+      return false;
+    }
+    if (k === 'v') {
+      if (typeof navigator.clipboard?.readText === 'function') {
+        navigator.clipboard
+          .readText()
+          .then((text: string) => {
+            if (text.length > 0) term.paste(text);
+          })
+          .catch(() => { /* 权限拒绝 */ });
+      }
+      return false;
+    }
+    return true;
+  };
+  return { copySelection, pasteClipboard, onCustomKey };
+}
+
 // —— TermPane 组件（单个终端面板） ——
 
 /** TermPane 的 props */
@@ -474,9 +620,9 @@ function TermPane(props: TermPaneProps): ReactElement {
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, Menlo, 'PingFang SC', 'Noto Sans Mono CJK SC', 'Microsoft YaHei', monospace",
-      fontSize: 12.5,
-      lineHeight: 1.25,
-      scrollback: 10000,
+      fontSize: TERM_FONT_SIZE,
+      lineHeight: TERM_LINE_HEIGHT,
+      scrollback: TERM_SCROLLBACK,
       drawBoldTextInBrightColors: false,
       theme: TERM_THEME,
       /* unicodeVersion 是运行时有效的提议属性，类型定义未收录——经断言补入 */
@@ -539,102 +685,18 @@ function TermPane(props: TermPaneProps): ReactElement {
       }
     });
 
-    /*
-     * Xshell/PuTTY 风格鼠标快捷键：选中文本后释放鼠标即复制；右键粘贴剪贴板。
-     *
-     * 剪贴板访问双层降级：
-     * - navigator.clipboard（Async Clipboard API）快但仅安全上下文（https 或
-     *   http://localhost/127.0.0.1）存在。从其他机器经纯 http 打开 GUI——「远程」
-     *   场景——它是 undefined 且任何调用抛错。复制因此回落到 legacy
-     *   document.execCommand("copy")（经临时 textarea），在不安全上下文也工作。
-     * - 读剪贴板没有不安全上下文回落 API，故 navigator.clipboard 缺失时不吞原生
-     *   右键菜单：其「粘贴」项喂给聚焦的 xterm textarea，xterm 自身的 paste 事件
-     *   转发文本进 shell。Ctrl+V 在终端内各上下文都那样工作。
-     */
-    const legacyCopy = (text: string): boolean => {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      let ok = false;
-      try {
-        ok = document.execCommand('copy');
-      } catch {
-        ok = false;
-      }
-      document.body.removeChild(ta);
-      return ok;
-    };
-    const writeClipboard = (text: string): void => {
-      if (typeof navigator.clipboard?.writeText === 'function') {
-        navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
-      } else {
-        legacyCopy(text);
-      }
-    };
-    const copySelection = (ev: MouseEvent): void => {
-      /* 仅左键释放：右键是粘贴，不重复复制 */
-      if (ev.button !== 0) return;
-      if (!term.hasSelection()) return;
-      const text = term.getSelection();
-      if (text.length === 0) return;
-      writeClipboard(text);
-    };
-    const pasteClipboard = (ev: MouseEvent): void => {
-      if (typeof navigator.clipboard?.readText !== 'function') {
-        /* 不安全上下文（远程 http / iframe 权限策略）：让浏览器原生右键菜单显示——
-         * 其「粘贴」项到达聚焦的 xterm textarea 并粘贴进 shell */
-        return;
-      }
-      ev.preventDefault();
-      navigator.clipboard
-        .readText()
-        .then((text: string) => {
-          if (text.length > 0) term.paste(text);
-        })
-        .catch(() => {
-          /* 权限拒绝；Ctrl+V 仍原生粘贴 */
-        });
-    };
-    /* VS Code 风格 Ctrl+Shift+C / Ctrl+Shift+V——仅在 Async Clipboard API 存在时
-     * （安全上下文）尝试；按键绝不到达 shell，故 Ctrl+C 保持 SIGINT、Ctrl+V 保持
-     * 原生粘贴。 */
-    const onCustomKey = (ev: KeyboardEvent): boolean => {
-      if (ev.type !== 'keydown') return true;
-      if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return true;
-      const k = ev.key.toLowerCase();
-      if (k === 'c') {
-        if (typeof navigator.clipboard?.writeText === 'function' && term.hasSelection()) {
-          writeClipboard(term.getSelection());
-        }
-        return false;
-      }
-      if (k === 'v') {
-        if (typeof navigator.clipboard?.readText === 'function') {
-          navigator.clipboard
-            .readText()
-            .then((text: string) => {
-              if (text.length > 0) term.paste(text);
-            })
-            .catch(() => { /* 权限拒绝 */ });
-        }
-        return false;
-      }
-      return true;
-    };
-    term.attachCustomKeyEventHandler(onCustomKey);
+    /* 剪贴板：选中复制、右键粘贴、Ctrl+Shift+C/V（双层降级逻辑见 createClipboardHandlers） */
+    const cb = createClipboardHandlers(term);
+    term.attachCustomKeyEventHandler(cb.onCustomKey);
     if (term.element !== undefined) {
-      term.element.addEventListener('mouseup', copySelection);
-      term.element.addEventListener('contextmenu', pasteClipboard);
+      term.element.addEventListener('mouseup', cb.copySelection);
+      term.element.addEventListener('contextmenu', cb.pasteClipboard);
     }
 
     return () => {
       if (term.element !== undefined) {
-        term.element.removeEventListener('mouseup', copySelection);
-        term.element.removeEventListener('contextmenu', pasteClipboard);
+        term.element.removeEventListener('mouseup', cb.copySelection);
+        term.element.removeEventListener('contextmenu', cb.pasteClipboard);
       }
       ws.onclose = null;
       ws.close();
@@ -686,54 +748,29 @@ function TermPane(props: TermPaneProps): ReactElement {
   });
 }
 
-// —— TerminalPanel 组件（主面板） ——
+// —— TerminalPanel 自定义 Hooks（按关注点拆分，消除 God Component） ——
 
-/** TerminalPanel 的 props（从 dsh 框架 slot 系统注入） */
-interface TerminalPanelProps {
-  /** 当前 dsh 会话 id（SessionStandardProps，scope='session' 自动注入） */
-  sessionId?: string;
-  /** dsh 工作区状态选择器（GlobalStandardProps，所有 slot 自动注入） */
-  useWorkspaces?: <T,>(selector: (s: unknown) => T) => T;
+/** usePanelHeight 返回值 */
+interface PanelHeight {
+  /** 当前面板高度（像素） */
+  height: number;
+  /** 高度 ref（拖拽回调内读最新值，避免闭包陈旧） */
+  heightRef: React.MutableRefObject<number>;
+  /** 拖拽 grip 的 pointerdown 处理 */
+  startResize: (e: React.PointerEvent) => void;
 }
 
 /**
- * Codex 风格底部终端面板：折叠态 34px bar，展开态全宽可拖拽面板。
- * Ctrl+` 切换（默认，可配置）。高度跨刷新持久化。
+ * 面板高度管理：拖拽调高 + localStorage 持久化。
  *
- * @param props - dsh 框架注入的 props
- * @returns 面板根元素
+ * 初值从 localStorage 恢复（不小于 MIN_HEIGHT），拖拽在 MIN_HEIGHT～MAX_HEIGHT_RATIO
+ * 视口高之间夹取，松手时写回 localStorage。
+ *
+ * @returns 高度 state、ref、拖拽回调
  */
-function TerminalPanel(props: TerminalPanelProps): ReactElement {
-  const { useEffect, useRef, useState, useCallback, useLayoutEffect } = React;
-  const { sessionId, useWorkspaces } = props ?? {};
+function usePanelHeight(): PanelHeight {
+  const { useState, useRef, useCallback } = React;
 
-  /** 面板是否展开 */
-  const [open, setOpen] = useState(false);
-  /*
-   * 本面板挂载所在的 DSH 会话的工作区路径。通过 useWorkspaces（GlobalStandardProps）
-   * 查找当前 sessionId 所属的工作区，取其 path 作为新终端的 cwd。宿主半在客户端 cwd
-   * 查询落空时回退到 workspaceRegistry 或 process.cwd()。
-   */
-  const workspaceCwd = useWorkspaces?.((s: unknown) => {
-    const state = s as { items?: Array<{ sessionIds?: string[]; path?: string }> };
-    if (!Array.isArray(state?.items) || typeof sessionId !== 'string') return undefined;
-    const ws = state.items.find(w => Array.isArray(w?.sessionIds) && w.sessionIds.includes(sessionId));
-    return typeof ws?.path === 'string' && ws.path.length > 0 ? ws.path : undefined;
-  });
-
-  /** tabs: [{id, title, shell, cwd, exited}] 按 strip 顺序 */
-  const [tabs, setTabs] = useState<TerminalTab[]>([]);
-  /** 当前活跃 tab id */
-  const [activeId, setActiveId] = useState<string | null>(null);
-  /** 操作进行中（禁用按钮） */
-  const [busy, setBusy] = useState(false);
-
-  /** 面板切换快捷键（从宿主 /config 响应解析） */
-  const DEFAULT_SHORTCUT = parseShortcut('ctrl+`');
-  const [shortcut, setShortcut] = useState<ShortcutSpec | null>(DEFAULT_SHORTCUT);
-  const shortcutLabel = shortcut?.label ?? 'Ctrl+`';
-
-  /** 面板高度（像素），从 localStorage 恢复 */
   const [height, setHeight] = useState<number>(() => {
     try {
       const saved = Number(localStorage.getItem(HEIGHT_KEY));
@@ -744,27 +781,55 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   const heightRef = useRef(height);
   heightRef.current = height;
 
-  /** 恢复已完成标记（防止 React 18 严格模式双执行重复拉取） */
-  const bootOnce = useRef(false);
-  /** 启动恢复完成（tab 列表就绪） */
-  const [bootReady, setBootReady] = useState(false);
-  /** 首次打开已处理标记（关闭最后一个 tab 不自动新建，只有全新打开才建） */
-  const openHandled = useRef(false);
-  /** 根元素 ref（测量几何用） */
-  const rootRef = useRef<HTMLDivElement | null>(null);
+  /* 拖拽 resize grip：向上生长面板 */
+  const startResize = useCallback((e: React.PointerEvent): void => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = heightRef.current;
+    const maxH = Math.round(window.innerHeight * MAX_HEIGHT_RATIO);
+    const move = (ev: PointerEvent): void => {
+      const h = Math.min(maxH, Math.max(MIN_HEIGHT, startH + (startY - ev.clientY)));
+      setHeight(Math.round(h));
+    };
+    const up = (): void => {
+      document.body.classList.remove('dshTermResizing');
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      try {
+        localStorage.setItem(HEIGHT_KEY, String(heightRef.current));
+      } catch { /* storage 不可用 */ }
+    };
+    document.body.classList.add('dshTermResizing');
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  }, []);
+
+  return { height, heightRef, startResize };
+}
+
+/** usePanelGeometry 返回值 */
+interface PanelGeometry {
   /** 对话列几何（面板不覆盖侧栏） */
+  geo: ConversationGeo;
+}
+
+/**
+ * 对话列几何测量：面板宽度对齐对话列，并向滚动容器注入 paddingBottom。
+ *
+ * 终端 bar/panel 固定在视口底部；对话滚动容器获得等于面板高度的 paddingBottom，
+ * 使 composer 座位与上方 dock 条目整体上移，不被 fixed 终端面板遮挡。
+ *
+ * 用 scrollBody 的 paddingBottom 而非 composerSeat 的 marginBottom：composer
+ * overlay 模式下 composerSeat 是 absolute，marginBottom 不改锚点；paddingBottom
+ * 对 sticky/absolute 子元素都生效。
+ *
+ * @param rootRef - 面板根元素 ref（测量起点）
+ * @returns 对话列几何 state
+ */
+function usePanelGeometry(rootRef: React.RefObject<HTMLDivElement | null>): PanelGeometry {
+  const { useLayoutEffect, useState } = React;
   const [geo, setGeo] = useState<ConversationGeo>({ left: 0, width: window.innerWidth });
 
-  /*
-   * 终端 bar/panel 固定在视口底部；对话滚动容器（[data-conversation-scroll]）获得等于
-   * 面板高度的 paddingBottom，使 composer 座位（sticky 或 absolute）和上方的 dock
-   * 条目（GoalBar / TodoDock 等）整体上移，不被 fixed 终端面板遮挡。
-   *
-   * 为什么用 scrollBody 的 paddingBottom 而非 composerSeat 的 marginBottom：
-   * - composer overlay 模式下 composerSeat 是 position:absolute; bottom:0，
-   *   marginBottom 不改变 absolute 元素的 bottom 锚点位置
-   * - paddingBottom 加在滚动容器上，无论子元素是 sticky 还是 absolute 都生效
-   */
   useLayoutEffect(() => {
     const rootEl = rootRef.current;
     if (rootEl === null) return;
@@ -791,16 +856,47 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
       window.removeEventListener('resize', measure);
       if (scrollBody !== null) scrollBody.style.paddingBottom = '';
     };
-  }, []);
+  }, [rootRef]);
 
-  const active = tabs.find(t => t.id === activeId) ?? null;
+  return { geo };
+}
 
-  /*
-   * 每次挂载恢复存活会话（页面加载、工作区切换）：面板按对话注入，切换工作区会
-   * 重挂本组件，tabs/open 会丢——bar 显示「无会话」但宿主仍持有 PTY。在此恢复
-   * （只 attach，绝不 create——无人打开的挂载不产孤儿 PTY）；创建在下方 open
-   * effect 里。
-   */
+/** useSessionRestore 返回值 */
+interface SessionRestore {
+  /** tabs 列表 */
+  tabs: TerminalTab[];
+  /** tabs setter */
+  setTabs: React.Dispatch<React.SetStateAction<TerminalTab[]>>;
+  /** 当前活跃 tab id */
+  activeId: string | null;
+  /** activeId setter */
+  setActiveId: React.Dispatch<React.SetStateAction<string | null>>;
+  /** 操作进行中（禁用按钮） */
+  busy: boolean;
+  /** busy setter（useTerminalTabs 共用） */
+  setBusy: React.Dispatch<React.SetStateAction<boolean>>;
+  /** 启动恢复完成（tab 列表就绪） */
+  bootReady: boolean;
+}
+
+/**
+ * 会话恢复：挂载时拉取 /sessions 恢复所有 tab（含已退出历史）。
+ *
+ * 面板按对话注入，切换工作区会重挂本组件，tabs 会丢——但宿主仍持有 PTY。在此
+ * 恢复（只 attach，绝不 create——无人打开的挂载不产孤儿 PTY）。bootOnce 守卫
+ * 防 React 18 严格模式双执行重复拉取。
+ *
+ * @returns tabs/activeId/busy state 与 setter，及 bootReady 标记
+ */
+function useSessionRestore(): SessionRestore {
+  const { useEffect, useRef, useState } = React;
+  const [tabs, setTabs] = useState<TerminalTab[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  /** 恢复已完成标记（防止 React 18 严格模式双执行重复拉取） */
+  const bootOnce = useRef(false);
+  const [bootReady, setBootReady] = useState(false);
+
   useEffect(() => {
     if (bootOnce.current) return;
     bootOnce.current = true;
@@ -831,17 +927,32 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     })();
   }, []);
 
-  /* 首次打开且无恢复的 tab：创建一个会话。openHandled 守卫使关闭最后一个 tab
-   * 不自动新建——只有全新打开才建。 */
-  useEffect(() => {
-    if (!open) {
-      openHandled.current = false;
-      return;
-    }
-    if (!bootReady || tabs.length > 0 || openHandled.current) return;
-    openHandled.current = true;
-    void newTab();
-  }, [open, bootReady, tabs.length]);
+  return { tabs, setTabs, activeId, setActiveId, busy, setBusy, bootReady };
+}
+
+/** usePanelShortcut 返回值 */
+interface PanelShortcut {
+  /** 当前切换快捷键 spec */
+  shortcut: ShortcutSpec | null;
+  /** 快捷键显示标签 */
+  shortcutLabel: string;
+}
+
+/**
+ * 面板切换快捷键：拉取 /config 配置 + 注册全局 keydown 监听。
+ *
+ * 拉取配置路由缺失时（旧宿主）回落默认值。keydown 监听在终端 pane 内聚焦时
+ * 不触发（留给 shell）——当快捷键是终端也消费的控制字符（如 Ctrl+J 换行）时
+ * 避免误切面板。
+ *
+ * @param setOpen - 展开/折叠 state setter（keydown 命中时切换）
+ * @returns 快捷键 spec 与显示标签
+ */
+function usePanelShortcut(setOpen: React.Dispatch<React.SetStateAction<boolean>>): PanelShortcut {
+  const { useEffect, useState } = React;
+  const DEFAULT_SHORTCUT = parseShortcut('ctrl+`');
+  const [shortcut, setShortcut] = useState<ShortcutSpec | null>(DEFAULT_SHORTCUT);
+  const shortcutLabel = shortcut?.label ?? 'Ctrl+`';
 
   /*
    * 拉取宿主半插件配置：切换快捷键（及未来用的 shell 命令）。路由缺失时（旧宿主）
@@ -862,10 +973,6 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     })();
   }, []);
 
-  /*
-   * 可配置切换快捷键（默认 Ctrl+`，如 ctrl+j）。当快捷键是终端也消费的控制字符
-   * （Ctrl+J 是 shell 的换行），终端 pane 内的聚焦按键留给 shell 而非切换面板。
-   */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!matchesShortcut(shortcut, e)) return;
@@ -875,12 +982,57 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shortcut]);
+  }, [shortcut, setOpen]);
+
+  return { shortcut, shortcutLabel };
+}
+
+/** useTerminalTabs 的入参 */
+interface TerminalTabsParams {
+  /** tabs 列表 */
+  tabs: TerminalTab[];
+  /** tabs setter */
+  setTabs: React.Dispatch<React.SetStateAction<TerminalTab[]>>;
+  /** 当前活跃 tab id */
+  activeId: string | null;
+  /** activeId setter */
+  setActiveId: React.Dispatch<React.SetStateAction<string | null>>;
+  /** busy setter */
+  setBusy: React.Dispatch<React.SetStateAction<boolean>>;
+  /** 当前活跃 tab（tabs.find 结果） */
+  active: TerminalTab | null;
+  /** 本面板挂载所在 DSH 会话的工作区路径 */
+  workspaceCwd: string | undefined;
+  /** 当前 dsh 会话 id */
+  sessionId: string | undefined;
+}
+
+/** useTerminalTabs 返回值 */
+interface TerminalTabs {
+  /** + 按钮新建 tab */
+  newTab: (shell?: string, cmdline?: string) => Promise<void>;
+  /** ✕ 按钮关闭 tab */
+  closeTab: (id: string) => Promise<void>;
+  /** ⟳ 重启活跃 tab */
+  restartActive: () => Promise<void>;
+  /** 会话退出回调（标记 tab 为 exited） */
+  onExit: (id: string) => void;
+}
+
+/**
+ * Tabs CRUD：新建、关闭、重启、退出标记。
+ *
+ * @param params - tabs state 与工作区上下文
+ * @returns 四个 tab 操作回调
+ */
+function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
+  const { tabs, setTabs, activeId, setActiveId, setBusy, active, workspaceCwd, sessionId } = params;
+  const { useCallback } = React;
 
   /** 会话退出回调：标记对应 tab 为 exited */
   const onExit = useCallback((id: string): void => {
     setTabs(cur => cur.map(t => (t.id === id ? { ...t, exited: true } : t)));
-  }, []);
+  }, [setTabs]);
 
   /*
    * + 按钮：在当前工作区新开会话，开新 tab。sessionId 随行使宿主半在客户端 cwd
@@ -915,7 +1067,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     } finally {
       setBusy(false);
     }
-  }, [workspaceCwd, active?.cwd, sessionId]);
+  }, [workspaceCwd, active, sessionId, setBusy, setTabs, setActiveId]);
 
   /** ✕ 按钮关闭 tab：删会话、移 tab、激活邻居 */
   const closeTab = useCallback(async (id: string): Promise<void> => {
@@ -931,7 +1083,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
       return next;
     });
     await del('/sessions/' + id);
-  }, []);
+  }, [setTabs, setActiveId]);
 
   /*
    * 头部刷新：经宿主 restart 路由原位重启活跃 tab——重新生成 shell 并继承旧滚动
@@ -961,30 +1113,113 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     } finally {
       setBusy(false);
     }
-  }, [active, workspaceCwd]);
+  }, [active, workspaceCwd, setBusy, setTabs, setActiveId]);
 
-  /* 拖拽 resize grip：向上生长面板 */
-  const startResize = useCallback((e: React.PointerEvent): void => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = heightRef.current;
-    const maxH = Math.round(window.innerHeight * MAX_HEIGHT_RATIO);
-    const move = (ev: PointerEvent): void => {
-      const h = Math.min(maxH, Math.max(MIN_HEIGHT, startH + (startY - ev.clientY)));
-      setHeight(Math.round(h));
-    };
-    const up = (): void => {
-      document.body.classList.remove('dshTermResizing');
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', up);
-      try {
-        localStorage.setItem(HEIGHT_KEY, String(heightRef.current));
-      } catch { /* storage 不可用 */ }
-    };
-    document.body.classList.add('dshTermResizing');
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', up);
-  }, []);
+  return { newTab, closeTab, restartActive, onExit };
+}
+
+/** RestartButton 的 props */
+interface RestartButtonProps {
+  /** 当前活跃 tab（为 null 时不渲染按钮） */
+  active: TerminalTab | null;
+  /** 操作进行中（禁用按钮） */
+  busy: boolean;
+  /** 重启回调 */
+  onRestart: () => void;
+}
+
+/**
+ * 重启按钮：展开态 tabs 栏与折叠态 bar 共用。
+ *
+ * 已退出 tab 的 title 提示「重启进程（保留标签位）」，活跃态提示「重启当前会话」。
+ *
+ * @param props - 重启按钮 props
+ * @returns 按钮元素，无活跃 tab 时返回 null
+ */
+function RestartButton(props: RestartButtonProps): ReactElement | null {
+  const { active, busy, onRestart } = props;
+  if (active === null) return null;
+  return React.createElement(
+    'button',
+    {
+      className: 'dshTermBarAction',
+      title: active.exited ? '重启进程（保留标签位）' : '重启当前会话',
+      'aria-label': '重启当前会话',
+      disabled: busy,
+      onClick: onRestart,
+    },
+    Refresh14(),
+  );
+}
+
+/** TerminalPanel 的 props（从 dsh 框架 slot 系统注入） */
+interface TerminalPanelProps {
+  /** 当前 dsh 会话 id（SessionStandardProps，scope='session' 自动注入） */
+  sessionId?: string;
+  /** dsh 工作区状态选择器（GlobalStandardProps，所有 slot 自动注入） */
+  useWorkspaces?: <T,>(selector: (s: unknown) => T) => T;
+}
+
+/**
+ * Codex 风格底部终端面板：折叠态 34px bar，展开态全宽可拖拽面板。
+ * Ctrl+` 切换（默认，可配置）。高度跨刷新持久化。
+ *
+ * @param props - dsh 框架注入的 props
+ * @returns 面板根元素
+ */
+function TerminalPanel(props: TerminalPanelProps): ReactElement {
+  const { useEffect, useRef, useState, useCallback } = React;
+  const { sessionId, useWorkspaces } = props ?? {};
+
+  /** 面板是否展开 */
+  const [open, setOpen] = useState(false);
+  /*
+   * 本面板挂载所在的 DSH 会话的工作区路径。通过 useWorkspaces（GlobalStandardProps）
+   * 查找当前 sessionId 所属的工作区，取其 path 作为新终端的 cwd。宿主半在客户端 cwd
+   * 查询落空时回退到 workspaceRegistry 或 process.cwd()。
+   */
+  const workspaceCwd = useWorkspaces?.((s: unknown) => {
+    const state = s as { items?: Array<{ sessionIds?: string[]; path?: string }> };
+    if (!Array.isArray(state?.items) || typeof sessionId !== 'string') return undefined;
+    const ws = state.items.find(w => Array.isArray(w?.sessionIds) && w.sessionIds.includes(sessionId));
+    return typeof ws?.path === 'string' && ws.path.length > 0 ? ws.path : undefined;
+  });
+
+  /* —— 拖拽调高（高度 state + localStorage 持久化） —— */
+  const { height, startResize } = usePanelHeight();
+
+  /** 根元素 ref（测量几何用） */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  /* —— 对话列几何测量 + scrollBody paddingBottom —— */
+  const { geo } = usePanelGeometry(rootRef);
+
+  /* —— 会话恢复（挂载拉取 /sessions） + tabs/activeId/busy state —— */
+  const { tabs, setTabs, activeId, setActiveId, busy, setBusy, bootReady } = useSessionRestore();
+
+  const active = tabs.find(t => t.id === activeId) ?? null;
+
+  /* —— tabs CRUD（新建/关闭/重启/退出标记） —— */
+  const { newTab, closeTab, restartActive, onExit } = useTerminalTabs({
+    tabs, setTabs, activeId, setActiveId, setBusy, active, workspaceCwd, sessionId,
+  });
+
+  /* —— 快捷键（拉取 /config + 全局 keydown 监听切换） —— */
+  const { shortcutLabel } = usePanelShortcut(setOpen);
+
+  /** 首次打开已处理标记（关闭最后一个 tab 不自动新建，只有全新打开才建） */
+  const openHandled = useRef(false);
+
+  /* 首次打开且无恢复的 tab：创建一个会话。openHandled 守卫使关闭最后一个 tab
+   * 不自动新建——只有全新打开才建。 */
+  useEffect(() => {
+    if (!open) {
+      openHandled.current = false;
+      return;
+    }
+    if (!bootReady || tabs.length > 0 || openHandled.current) return;
+    openHandled.current = true;
+    void newTab();
+  }, [open, bootReady, tabs.length, newTab]);
 
   /** 切换展开/折叠 */
   const toggle = useCallback((): void => setOpen(v => !v), []);
@@ -1062,19 +1297,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
           ),
           React.createElement('span', { className: 'dshTermTabsState', title: stateLabel }, stateLabel),
           /* 重启对已退出历史 tab 也需可达 */
-          active !== null
-            ? React.createElement(
-              'button',
-              {
-                className: 'dshTermBarAction',
-                title: active.exited ? '重启进程（保留标签位）' : '重启当前会话',
-                'aria-label': '重启当前会话',
-                disabled: busy,
-                onClick: () => { void restartActive(); },
-              },
-              Refresh14(),
-            )
-            : null,
+          React.createElement(RestartButton, { active, busy, onRestart: () => { void restartActive(); } }),
           React.createElement(
             'button',
             {
@@ -1135,19 +1358,7 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
         React.createElement(
           'span',
           { className: 'dshTermBarActions', onClick: (e: React.MouseEvent) => e.stopPropagation() },
-          active !== null
-            ? React.createElement(
-              'button',
-              {
-                className: 'dshTermBarAction',
-                title: active.exited ? '重启进程（保留标签位）' : '重启当前会话',
-                'aria-label': '重启当前会话',
-                disabled: busy,
-                onClick: () => { void restartActive(); },
-              },
-              Refresh14(),
-            )
-            : null,
+          React.createElement(RestartButton, { active, busy, onRestart: () => { void restartActive(); } }),
         ),
         React.createElement('span', { className: 'dshTermBarChevron', 'aria-hidden': true }, ChevronUp14()),
       ),

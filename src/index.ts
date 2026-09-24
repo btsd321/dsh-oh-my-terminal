@@ -11,6 +11,12 @@
  *              pnpm install 时装进 node_modules；import 直接引真实包，无需
  *              declare module 占位。xterm.css 从 node_modules 读取并 serve。
  *
+ *              职责拆分：协议/尺寸/快捷键/环境变量常量在 {@link module:constants}，
+ *              平台适配器在 {@link module:platform}，会话持久化（日志落盘、
+ *              元数据读写、启动恢复）在 {@link module:persistence}。本文件仅
+ *              保留 cordis 插件壳、HTTP 路由分发、WebSocket 升级注册、settings
+ *              集成与会话生命周期管理（create/kill/restart）。
+ *
  * 通道拓扑：
  * ```
  * 远端页面 ──同源 Cookie 鉴权──▶ /api/dsh-remote-terminal/*（HTTP 路由）
@@ -28,10 +34,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join as pathJoin } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Context } from '@deepseek-ai/cordis';
@@ -40,27 +42,25 @@ import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 // 独立插件有真实 node_modules——直接 import node-pty 与 ws，无需 declare module 占位
 // WebSocket 需作为值导入：ws.readyState === WebSocket.OPEN 用到其静态常量
-import { spawn, type IPty } from 'node-pty';
+import { spawn } from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
+import { readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join as pathJoin } from 'node:path';
+import { fileURLToPath } from 'node:url';
 // 纯函数工具模块——宿主半与浏览器半共用（esbuild 打包浏览器 bundle 时内联）
-import { splitCommandLine, pickFirst } from './server-command.js';
+import { splitCommandLine, firstNonEmpty } from './server-command.js';
 import { createLogger } from './logger.js';
+import {
+  PKG_NAME, ROUTE_PREFIX, WS_PREFIX, PROTOCOL_VERSION,
+  SCROLLBACK_CHARS, COLS_MIN, COLS_MAX, ROWS_MIN, ROWS_MAX, DEFAULT_COLS, DEFAULT_ROWS,
+  DEFAULT_TOGGLE_SHORTCUT, ENV_TOGGLE_SHORTCUT, ENV_SHELL_COMMAND, ENV_DATA_DIR,
+} from './constants.js';
+import { platform } from './platform.js';
+import { SessionStore } from './persistence.js';
+import type { SessionRecord } from './persistence.js';
 
 const log = createLogger('terminal-host');
-
-// —— 协议常量（从 protocol.ts 内联——独立插件不需要单独的协议文件）——
-
-/** 插件包名 */
-const PKG_NAME = 'dsh-oh-my-terminal';
-
-/** 远端组件宿主半在远端 dsh 注册的同源路由前缀 */
-const ROUTE_PREFIX = '/api/dsh-remote-terminal';
-
-/** WebSocket 升级路径前缀（per-session: /ws/<id>） */
-const WS_PREFIX = '/api/dsh-remote-terminal/ws';
-
-/** 终端协议版本（浏览器半与本机构建器各持一份；不一致时远端面板降级禁用） */
-const PROTOCOL_VERSION = 1;
 
 // —— webServer 类型增广 ——
 
@@ -100,6 +100,17 @@ interface TerminalContext extends Context {
   webServer: WebServerService;
 }
 
+/**
+ * settings 服务的最小接口——收口原先 3 层 `as unknown as` 断言链。
+ * register 注册 schema 并返回带 watch 的 scope；get 读取当前值。
+ */
+interface SettingsService {
+  /** 注册命名空间配置 schema，返回可监听变更的 scope */
+  register(ns: string, schema: unknown): { watch(cb: () => void): void };
+  /** 读取命名空间当前值（未注册时 undefined） */
+  get(ns: string): Record<string, unknown> | undefined;
+}
+
 // —— xterm.css 读取（独立插件从 node_modules 读取，替代合成包的 define 注入）——
 
 /** 构建产物目录（lib/）——getXtermCss 在此找 xterm.css，找不到回退到 node_modules */
@@ -133,247 +144,6 @@ function getXtermCss(): string {
   }
   return xtermCssCache;
 }
-
-// —— 常量 ——
-
-/** 滚动缓冲上限（字符数）——对齐参考项目 SCROLLBACK_CHARS，长 agent 会话流大量工具输出 */
-const SCROLLBACK_CHARS = 500_000;
-
-/** cols 取值范围 */
-const COLS_MIN = 20;
-const COLS_MAX = 500;
-/** rows 取值范围 */
-const ROWS_MIN = 5;
-const ROWS_MAX = 200;
-
-/** 默认列数 */
-const DEFAULT_COLS = 80;
-/** 默认行数 */
-const DEFAULT_ROWS = 24;
-
-/** 日志落盘合并窗口（毫秒）——pty.onData 高频回调，合并写盘避免 IO 风暴 */
-const LOG_FLUSH_MS = 250;
-
-/** 默认展开/收起快捷键 */
-const DEFAULT_TOGGLE_SHORTCUT = 'ctrl+`';
-
-/** 切换快捷键环境变量名（ops 级覆盖，优先于 settings 文档） */
-const ENV_TOGGLE_SHORTCUT = 'DSH_PLUGIN_TERMINAL_TOGGLE_SHORTCUT';
-/** shell 命令环境变量名（ops 级覆盖，优先于 settings 文档） */
-const ENV_SHELL_COMMAND = 'DSH_PLUGIN_TERMINAL_SHELL_COMMAND';
-/** 持久化目录环境变量覆盖（测试用） */
-const ENV_DATA_DIR = 'DSH_PLUGIN_TERMINAL_DATA';
-
-/** 会话元数据文件名 */
-const META_FILE = 'sessions.json';
-/** 滚动缓冲日志子目录名 */
-const LOG_SUBDIR = 'logs';
-
-// —— 平台适配器 ——
-
-/** spawn 参数：node-pty spawn(file, args, opts) 的 file 和 args */
-interface SpawnArgs {
-  /** 可执行文件路径 */
-  file: string;
-  /** 命令行参数（不含 file 本身） */
-  args: string[];
-}
-
-/**
- * 平台适配器接口——封装所有 OS 差异，业务逻辑不关心平台。
- *
- * 新增平台只需实现此接口并在 PLATFORM_ADAPTERS 注册，不需要修改 resolveSpawn /
- * platform.buildSessionEnv / platform.builtinTerminalTypes 等业务代码。
- */
-interface PlatformAdapter {
-  /** 探测平台默认 shell 可执行文件路径 */
-  detectDefaultShell(): string;
-  /**
-   * 为裸 shell 文件构建 spawn 参数（含交互标志等平台特定参数）。
-   * @param file - shell 可执行文件路径
-   */
-  buildBareSpawnArgs(file: string): SpawnArgs;
-  /** 构建 PTY 子进程环境变量（在 process.env 基础上补充/覆盖平台特定变量） */
-  buildSessionEnv(): Record<string, string>;
-  /** node-pty spawn 的 name 参数（终端类型描述符） */
-  ptyName: string;
-  /** 内置终端种类列表（/config 返回给浏览器半） */
-  builtinTerminalTypes: TerminalType[];
-}
-
-// —— POSIX 适配器 ——
-
-const posixAdapter: PlatformAdapter = {
-  detectDefaultShell(): string {
-    return process.env.SHELL ?? '/bin/bash';
-  },
-  buildBareSpawnArgs(file: string): SpawnArgs {
-    // POSIX shell 需要 -i 进入交互模式
-    return { file, args: ['-i'] };
-  },
-  buildSessionEnv(): Record<string, string> {
-    const pick = (key: string, fallback: string): string => {
-      const v = process.env[key];
-      return v === undefined || v === '' ? fallback : v;
-    };
-    return {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: pick('COLORTERM', 'truecolor'),
-      PYTHONIOENCODING: pick('PYTHONIOENCODING', 'utf-8'),
-      LANG: pick('LANG', 'en_US.UTF-8'),
-      LC_ALL: pick('LC_ALL', 'en_US.UTF-8'),
-    } as Record<string, string>;
-  },
-  ptyName: 'xterm-256color',
-  builtinTerminalTypes: [
-    { id: 'default', label: '默认 Shell', command: '' },
-    { id: 'bash', label: 'Bash', command: 'bash -l' },
-    { id: 'zsh', label: 'Zsh', command: 'zsh -l' },
-  ],
-};
-
-// —— Windows 适配器 ——
-
-const win32Adapter: PlatformAdapter = {
-  detectDefaultShell(): string {
-    // COMSPEC 是 Windows 系统环境变量，指向 cmd.exe
-    const comspec = process.env.COMSPEC;
-    if (typeof comspec === 'string' && comspec.length > 0) return comspec;
-    return 'cmd.exe';
-  },
-  buildBareSpawnArgs(file: string): SpawnArgs {
-    // Windows shell（cmd.exe / pwsh.exe / powershell.exe）默认就是交互模式，无需额外参数
-    return { file, args: [] };
-  },
-  buildSessionEnv(): Record<string, string> {
-    // Windows ConPTY 不需要 TERM/COLORTERM/LANG/LC_ALL 等 POSIX 变量
-    // 只补充 PYTHONIOENCODING 确保 Python 输出 UTF-8
-    const pick = (key: string, fallback: string): string => {
-      const v = process.env[key];
-      return v === undefined || v === '' ? fallback : v;
-    };
-    return {
-      ...process.env,
-      PYTHONIOENCODING: pick('PYTHONIOENCODING', 'utf-8'),
-    } as Record<string, string>;
-  },
-  ptyName: 'xterm-256color',
-  builtinTerminalTypes: [
-    { id: 'default', label: '默认 Shell', command: '' },
-    { id: 'pwsh', label: 'PowerShell', command: 'pwsh' },
-    { id: 'cmd', label: 'CMD', command: 'cmd' },
-  ],
-};
-
-/** 按 process.platform 选择适配器——未知平台回落 POSIX */
-const platform: PlatformAdapter = process.platform === 'win32' ? win32Adapter : posixAdapter;
-
-// —— 会话 cwd 解析 ——
-
-/**
- * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 查 sessionId → process.cwd() 兜底。
- *
- * @param cwd - 客户端传的工作目录
- * @param sessionId - 所属 DSH 会话 id（用于 workspaceRegistry 查工作区路径）
- * @param workspaceRegistry - 可选的 DSH 工作区注册表
- * @returns 解析后的工作目录
- */
-function resolveSessionCwd(
-  cwd: string | undefined,
-  sessionId: string | undefined,
-  workspaceRegistry: unknown,
-): string {
-  const candidates: string[] = [];
-  if (typeof cwd === 'string' && cwd.length > 0) candidates.push(cwd);
-  if (typeof sessionId === 'string' && sessionId.length > 0 && workspaceRegistry !== undefined) {
-    try {
-      // workspaceRegistry.host.sessionPath(sessionId) 返回工作区路径——dsh-workspace 服务提供
-      const reg = workspaceRegistry as { host?: { sessionPath?: (id: string) => string | undefined } };
-      const path = reg.host?.sessionPath?.(sessionId);
-      if (typeof path === 'string' && path.length > 0) candidates.push(path);
-    } catch {
-      /* workspace 服务不存在或未就绪——降级到下一候选 */
-    }
-  }
-  for (const candidate of candidates) {
-    try {
-      if (statSync(candidate).isDirectory()) return candidate;
-    } catch {
-      /* 路径缺失或不可访问——试下一候选 */
-    }
-  }
-  return process.cwd();
-}
-
-// —— 终端种类定义 ——
-
-/** 终端种类条目（/config 返回给浏览器半，未来扩展 bash/zsh/fish 只需加条目） */
-interface TerminalType {
-  /** 种类 id */
-  id: string;
-  /** 显示标签 */
-  label: string;
-  /** shell 命令行（空串 = 平台默认） */
-  command: string;
-}
-
-/** 内置终端种类列表——由平台适配器提供，未来可从 settings 扩展 */
-
-// —— 会话持久化 ——
-
-/** 持久化元数据条目（落盘 sessions.json 的单条记录） */
-interface PersistedMeta {
-  /** 会话 id */
-  id: string;
-  /** 显示标题 */
-  title: string;
-  /** shell 可执行文件路径 */
-  shell: string;
-  /** 完整命令行（有配置时记录；null = 无配置） */
-  cmdline: string | null;
-  /** 工作目录 */
-  cwd: string;
-  /** 创建时间戳（毫秒） */
-  bornAt: number;
-}
-
-// —— 会话管理 ——
-
-/** 会话记录——一个 PTY 会话的完整运行时状态 */
-interface SessionRecord {
-  /** 进程内单调 id（t1-<uuid> 格式，不可猜测） */
-  id: string;
-  /** node-pty 实例；已退出时为 null */
-  pty: IPty | null;
-  /** shell 可执行文件路径 */
-  shell: string;
-  /** 完整命令行（有配置时记录；null = 无配置） */
-  cmdline: string | null;
-  /** 显示标题 */
-  title: string;
-  /** 工作目录 */
-  cwd: string;
-  /** 滚动缓冲（最近 SCROLLBACK_CHARS 字符） */
-  buffer: string;
-  /** 是否已退出 */
-  exited: boolean;
-  /** 退出详情（exitCode） */
-  exitDetail: number | null;
-  /** 活跃 WebSocket 客户端集合 */
-  wsClients: Set<WebSocket>;
-  /** 创建时间戳（毫秒） */
-  bornAt: number;
-  /** restart 时标记旧 pty 为 dead——旧 pty 的异步 onData/onExit 帧不再落盘 */
-  dead?: boolean;
-  /** 待落盘的日志块（合并写入用） */
-  pending?: string;
-  /** 日志合并定时器引用 */
-  flushTimer?: ReturnType<typeof setTimeout> | null;
-}
-
-/** 会话 id 自增计数器 */
-let sessionCounter = 0;
 
 // —— 辅助函数 ——
 
@@ -445,6 +215,9 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   }
 }
 
+/** 会话 id 自增计数器 */
+let sessionCounter = 0;
+
 /**
  * 生成不可猜测的会话 id：可读计数器前缀 + crypto-random 后缀。
  * id 保密性不是安全边界（WS 路由已同源门控），随机后缀是对枚举的纵深防御。
@@ -454,6 +227,41 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 function makeId(): string {
   sessionCounter += 1;
   return `t${sessionCounter}-${randomUUID()}`;
+}
+
+/**
+ * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 查 sessionId → process.cwd() 兜底。
+ *
+ * @param cwd - 客户端传的工作目录
+ * @param sessionId - 所属 DSH 会话 id（用于 workspaceRegistry 查工作区路径）
+ * @param workspaceRegistry - 可选的 DSH 工作区注册表
+ * @returns 解析后的工作目录
+ */
+function resolveSessionCwd(
+  cwd: string | undefined,
+  sessionId: string | undefined,
+  workspaceRegistry: unknown,
+): string {
+  const candidates: string[] = [];
+  if (typeof cwd === 'string' && cwd.length > 0) candidates.push(cwd);
+  if (typeof sessionId === 'string' && sessionId.length > 0 && workspaceRegistry !== undefined) {
+    try {
+      // workspaceRegistry.host.sessionPath(sessionId) 返回工作区路径——dsh-workspace 服务提供
+      const reg = workspaceRegistry as { host?: { sessionPath?: (id: string) => string | undefined } };
+      const path = reg.host?.sessionPath?.(sessionId);
+      if (typeof path === 'string' && path.length > 0) candidates.push(path);
+    } catch {
+      /* workspace 服务不存在或未就绪——降级到下一候选 */
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate;
+    } catch {
+      /* 路径缺失或不可访问——试下一候选 */
+    }
+  }
+  return process.cwd();
 }
 
 /**
@@ -477,20 +285,20 @@ function resolveSpawn(
   cmdline: string | undefined,
   runtimeShellCommand: string,
 ): { file: string; args: string[]; cmdline: string | null } {
-  // 1. 裸 shell 文件覆盖——经平台适配器构建参数（POSIX 加 -i，Windows 不加）
-  const bare = pickFirst(shell) ?? null;
+  // 裸 shell 文件覆盖——经平台适配器构建参数（POSIX 加 -i，Windows 不加）
+  const bare = firstNonEmpty(shell) ?? null;
   if (bare !== null) {
     const { file, args } = platform.buildBareSpawnArgs(bare);
     return { file, args, cmdline: null };
   }
-  // 2. 完整命令行（per-request 覆盖 > settings 配置）——原样拆分，不注入平台标志
-  const full = pickFirst(cmdline, runtimeShellCommand) ?? null;
+  // 完整命令行（per-request 覆盖 > settings 配置）——原样拆分，不注入平台标志
+  const full = firstNonEmpty(cmdline, runtimeShellCommand) ?? null;
   if (full !== null) {
     const parts = splitCommandLine(full);
     const file = parts[0] ?? platform.detectDefaultShell();
     return { file, args: parts.slice(1), cmdline: full };
   }
-  // 3. 平台默认——经平台适配器构建参数
+  // 平台默认——经平台适配器构建参数
   const file = platform.detectDefaultShell();
   const { args } = platform.buildBareSpawnArgs(file);
   return { file, args, cmdline: null };
@@ -539,17 +347,11 @@ export function apply(ctx: Context): void {
         .default(''),
     });
     const settingsNs = 'terminal';
-    // settings 服务接口：register 注册 schema 并返回带 watch 的 scope；get 读取当前值
-    const scope = (settingsCtx as unknown as {
-      settings: {
-        register(ns: string, schema: unknown): { watch(cb: () => void): void };
-        get(ns: string): Record<string, unknown> | undefined;
-      };
-    }).settings.register(settingsNs, schema);
+    // 单次断言收口原先 3 层 as unknown as 断言链——后续用类型化变量操作
+    const settings = (settingsCtx as unknown as { settings: SettingsService }).settings;
+    const scope = settings.register(settingsNs, schema);
     const sync = (): void => {
-      const value = (settingsCtx as unknown as {
-        settings: { get(ns: string): Record<string, unknown> | undefined };
-      }).settings.get(settingsNs);
+      const value = settings.get(settingsNs);
       if (value === undefined) return;
       // env 未设时才接受文档值——env 是 ops 级覆盖，不能被文档编辑覆盖
       if (process.env[ENV_TOGGLE_SHORTCUT] === undefined && typeof value.toggleShortcut === 'string') {
@@ -568,154 +370,53 @@ export function apply(ctx: Context): void {
   /** id -> per-session WS 升级路由 disposer */
   const upgradeDisposers = new Map<string, () => void>();
 
-  // —— 持久化目录与文件 ——
+  // —— 持久化目录与会话存储 ——
   // $DSH_HOME 由远端 dsh 设置为会话目录；缺失时回落 ~/.dsh
   const DATA_DIR = process.env[ENV_DATA_DIR]
     ?? pathJoin(process.env.DSH_HOME ?? pathJoin(homedir(), '.dsh'), 'plugin-data', 'terminal');
-  const META_PATH = pathJoin(DATA_DIR, META_FILE);
-  const LOG_DIR = pathJoin(DATA_DIR, LOG_SUBDIR);
+  const store = new SessionStore(DATA_DIR, sessions);
 
   /**
-   * 构造会话滚动缓冲日志文件路径。
+   * 处理一条 WebSocket 文本消息：纯文本 = stdin，JSON resize = 调整尺寸。
    *
-   * @param id - 会话 id
-   * @returns 日志文件绝对路径
+   * @param session - 目标会话
+   * @param text - 原始消息文本
    */
-  function logPath(id: string): string {
-    return pathJoin(LOG_DIR, `${id}.log`);
-  }
-
-  /**
-   * 从内存映射重写 sessions.json（N 小，全量重写）。
-   */
-  function persistMeta(): void {
-    try {
-      mkdirSync(DATA_DIR, { recursive: true });
-      const meta: PersistedMeta[] = [...sessions.values()].map(s => ({
-        id: s.id,
-        title: s.title,
-        shell: s.shell,
-        cmdline: s.cmdline ?? null,
-        cwd: s.cwd,
-        bornAt: s.bornAt,
-      }));
-      writeFileSync(META_PATH, JSON.stringify(meta));
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      log.error( `persist 元数据失败：${msg}`);
-    }
-  }
-
-  /**
-   * 追加输出到会话日志，250ms 合并以保持 IO 低开销。
-   *
-   * @param record - 会话记录
-   * @param data - 输出数据
-   */
-  function queueLog(record: SessionRecord, data: string): void {
-    record.pending = (record.pending ?? '') + data;
-    if (record.flushTimer !== undefined && record.flushTimer !== null) return;
-    record.flushTimer = setTimeout(() => {
-      record.flushTimer = null;
-      const chunk = record.pending ?? '';
-      record.pending = '';
-      if (chunk.length === 0) return;
+  function handleWsMessage(session: SessionRecord, text: string): void {
+    if (session.exited || session.pty === null) return;
+    if (text.startsWith('{"type":"resize"')) {
       try {
-        mkdirSync(LOG_DIR, { recursive: true });
-        appendFileSync(logPath(record.id), chunk);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.error( `日志写入失败（会话 ${record.id}）：${msg}`);
-      }
-    }, LOG_FLUSH_MS);
-    // unref 避免定时器阻止进程退出
-    record.flushTimer.unref();
-  }
-
-  /**
-   * 立即刷新待写日志块（退出/销毁时调用）。
-   *
-   * @param record - 会话记录
-   */
-  function flushLog(record: SessionRecord): void {
-    if (record.flushTimer !== undefined && record.flushTimer !== null) {
-      clearTimeout(record.flushTimer);
-      record.flushTimer = null;
-    }
-    const chunk = record.pending ?? '';
-    record.pending = '';
-    if (chunk.length === 0) return;
-    try {
-      mkdirSync(LOG_DIR, { recursive: true });
-      appendFileSync(logPath(record.id), chunk);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      log.error( `日志刷新失败（会话 ${record.id}）：${msg}`);
-    }
-  }
-
-  /**
-   * 从磁盘删除会话持久化文件（用户显式关闭）。
-   * 先清 pending 再删文件——pty.kill() 异步触发 onExit，其 flushLog 会重建被删的文件。
-   *
-   * @param id - 会话 id
-   */
-  function forgetSession(id: string): void {
-    const record = sessions.get(id);
-    if (record !== undefined) {
-      // 先清 pending + 定时器，防止异步 onExit 的 flushLog 重建文件
-      if (record.flushTimer !== undefined && record.flushTimer !== null) {
-        clearTimeout(record.flushTimer);
-        record.flushTimer = null;
-      }
-      record.pending = '';
-    }
-    try {
-      unlinkSync(logPath(id));
-    } catch {
-      /* 无日志文件——忽略 */
-    }
-    sessions.delete(id);
-    persistMeta();
-  }
-
-  /**
-   * 启动时恢复持久化会话为已退出的历史 tab。
-   * 读 sessions.json + 各 .log 文件，buffer 从 .log 读取（截断到 SCROLLBACK_CHARS）。
-   */
-  function loadPersisted(): void {
-    let meta: PersistedMeta[] = [];
-    try {
-      meta = JSON.parse(readFileSync(META_PATH, 'utf8')) as PersistedMeta[];
-    } catch {
-      return; // 尚未持久化——直接返回
-    }
-    for (const m of meta) {
-      if (sessions.has(m.id)) continue;
-      let buffer = '';
-      try {
-        buffer = readFileSync(logPath(m.id), 'utf8').slice(-SCROLLBACK_CHARS);
+        const body = JSON.parse(text) as { cols?: number; rows?: number };
+        if (typeof body.cols === 'number' && typeof body.rows === 'number') {
+          session.pty.resize(body.cols, body.rows);
+        }
       } catch {
-        /* 无日志——空历史 */
+        /* 忽略畸形 resize 消息 */
       }
-      const record: SessionRecord = {
-        id: m.id,
-        pty: null,
-        shell: m.shell ?? 'shell',
-        cmdline: typeof m.cmdline === 'string' && m.cmdline.length > 0 ? m.cmdline : null,
-        title: m.title ?? '已恢复会话',
-        cwd: m.cwd ?? '',
-        buffer,
-        exited: true,
-        exitDetail: 0,
-        wsClients: new Set(),
-        bornAt: m.bornAt ?? Date.now(),
-        pending: '',
-        flushTimer: null,
-      };
-      sessions.set(m.id, record);
-      registerSessionWs(m.id);
+    } else {
+      session.pty.write(text);
     }
+  }
+
+  /**
+   * 处理一条已升级的 WebSocket 连接：登记客户端 → 回放 buffer → 接收消息 →
+   * 关闭/出错时移除客户端。
+   *
+   * @param session - 目标会话
+   * @param ws - 已升级的 WebSocket 连接
+   */
+  function handleWsConnection(session: SessionRecord, ws: WebSocket): void {
+    session.wsClients.add(ws);
+    // 连接时回放历史 buffer
+    if (session.buffer.length > 0) ws.send(session.buffer);
+    // 已退出会话：回放后立即关闭
+    if (session.exited) {
+      ws.close(1000, 'session exited');
+      return;
+    }
+    ws.on('message', (data) => handleWsMessage(session, String(data)));
+    ws.on('close', () => session.wsClients.delete(ws));
+    ws.on('error', () => session.wsClients.delete(ws));
   }
 
   /**
@@ -741,35 +442,7 @@ export function apply(ctx: Context): void {
           return;
         }
         const wss = new WebSocketServer({ noServer: true });
-        wss.on('connection', (ws: WebSocket) => {
-          session.wsClients.add(ws);
-          // 连接时回放历史 buffer
-          if (session.buffer.length > 0) ws.send(session.buffer);
-          // 已退出会话：回放后立即关闭
-          if (session.exited) {
-            ws.close(1000, 'session exited');
-            return;
-          }
-          // 接收客户端消息：纯文本 = stdin，JSON resize = 调整尺寸
-          ws.on('message', (data) => {
-            if (session.exited || session.pty === null) return;
-            const text = String(data);
-            if (text.startsWith('{"type":"resize"')) {
-              try {
-                const body = JSON.parse(text) as { cols?: number; rows?: number };
-                if (typeof body.cols === 'number' && typeof body.rows === 'number') {
-                  session.pty.resize(body.cols, body.rows);
-                }
-              } catch {
-                /* 忽略畸形 resize 消息 */
-              }
-            } else {
-              session.pty.write(text);
-            }
-          });
-          ws.on('close', () => session.wsClients.delete(ws));
-          ws.on('error', () => session.wsClients.delete(ws));
-        });
+        wss.on('connection', (ws: WebSocket) => handleWsConnection(session, ws));
         wss.handleUpgrade(req, socket, head, (ws: WebSocket) => wss.emit('connection', ws, req));
       },
     }));
@@ -801,7 +474,7 @@ export function apply(ctx: Context): void {
     const id = makeId();
     const sessionCwd = resolveSessionCwd(options.cwd, options.sessionId, workspaceRegistry);
 
-    // 1. spawn PTY——node-pty 返回 IPty 实例
+    // node-pty 返回 IPty 实例
     const pty = spawn(file, args, {
       name: platform.ptyName,
       cols,
@@ -810,7 +483,6 @@ export function apply(ctx: Context): void {
       env: platform.buildSessionEnv(),
     });
 
-    // 2. 登记会话记录
     const record: SessionRecord = {
       id,
       pty,
@@ -826,41 +498,36 @@ export function apply(ctx: Context): void {
       bornAt: Date.now(),
     };
 
-    // 3. seed 预写入日志文件
+    // seed 预写入日志文件（覆盖写；流式追加由 queueLog 负责）
     if (record.buffer.length > 0) {
-      try {
-        mkdirSync(LOG_DIR, { recursive: true });
-        writeFileSync(logPath(id), record.buffer);
-      } catch {
-        /* best effort——预写失败不影响运行时 */
-      }
+      store.writeSeed(id, record.buffer);
     }
 
     sessions.set(id, record);
     registerSessionWs(id);
-    persistMeta();
+    store.persistMeta();
 
-    log.info( `创建会话 ${id}（${file}，${cols}x${rows}，cwd=${sessionCwd}）`);
+    log.info(`创建会话 ${id}（${file}，${cols}x${rows}，cwd=${sessionCwd}）`);
 
-    // 4. onData → 追加 buffer（截断到 SCROLLBACK_CHARS）+ 落盘 + ws.send
+    // onData → 追加 buffer（截断到 SCROLLBACK_CHARS）+ 落盘 + ws.send
     pty.onData((data) => {
       if (record.dead) return; // restarted：旧 pty 可能还在吐几帧
       record.buffer = (record.buffer + data).slice(-SCROLLBACK_CHARS);
-      queueLog(record, data);
+      store.queueLog(record, data);
       for (const ws of record.wsClients) {
         if (ws.readyState === WebSocket.OPEN) ws.send(data);
       }
     });
 
-    // 5. onExit → 标记 exited + 持久化 + 关闭所有 WS 客户端
+    // onExit → 标记 exited + 持久化 + 关闭所有 WS 客户端
     pty.onExit(({ exitCode }) => {
       record.exited = true;
       record.exitDetail = exitCode;
       if (!record.dead) {
-        flushLog(record);
-        persistMeta();
+        store.flushLog(record);
+        store.persistMeta();
       }
-      log.info( `会话 ${id} 已退出（code ${exitCode}）`);
+      log.info(`会话 ${id} 已退出（code ${exitCode}）`);
       for (const ws of record.wsClients) {
         try {
           ws.close(1000, 'session exited');
@@ -907,12 +574,7 @@ export function apply(ctx: Context): void {
     const requestedCwd = typeof cwd === 'string' && cwd.length > 0 ? cwd : old.cwd;
 
     // 先 detach 旧会话：标记 dead + 清 pending，防止异步 onExit/onData 帧复活日志文件
-    old.dead = true;
-    if (old.flushTimer !== undefined && old.flushTimer !== null) {
-      clearTimeout(old.flushTimer);
-      old.flushTimer = null;
-    }
-    old.pending = '';
+    store.detachForRestart(old);
     try {
       old.pty?.kill();
     } catch {
@@ -926,13 +588,9 @@ export function apply(ctx: Context): void {
       upgradeDisposers.delete(id);
     }
     sessions.delete(id);
-    try {
-      unlinkSync(logPath(id));
-    } catch {
-      /* 无日志——忽略 */
-    }
+    store.deleteLogFile(id);
 
-    log.info( `重启会话 ${id}（继承 ${seed.length} 字符缓冲）`);
+    log.info(`重启会话 ${id}（继承 ${seed.length} 字符缓冲）`);
 
     // 创建新会话——有 cmdline 时重跑原命令，否则用裸 shell 文件
     const fresh = createSession({
@@ -944,7 +602,7 @@ export function apply(ctx: Context): void {
   }
 
   // —— 启动时恢复持久化会话（已退出历史 tab）——
-  loadPersisted();
+  store.loadPersisted(registerSessionWs);
 
   // —— HTTP 前缀路由注册 ——
   const disposeRoute = webServer.register({
@@ -1038,8 +696,8 @@ export function apply(ctx: Context): void {
             dispose();
             upgradeDisposers.delete(id);
           }
-          forgetSession(id);
-          log.info( `删除会话 ${id}`);
+          store.forgetSession(id);
+          log.info(`删除会话 ${id}`);
           json(res, 200, { ok: true });
           return;
         }
@@ -1074,5 +732,5 @@ export function apply(ctx: Context): void {
     };
   }, PKG_NAME + '.routes');
 
-  log.info( `宿主半已激活；路由前缀 ${ROUTE_PREFIX}，WS 前缀 ${WS_PREFIX}，快捷键 ${runtimeSettings.toggleShortcut}，shell ${runtimeSettings.shellCommand || '(自动)'}`);
+  log.info(`宿主半已激活；路由前缀 ${ROUTE_PREFIX}，WS 前缀 ${WS_PREFIX}，快捷键 ${runtimeSettings.toggleShortcut}，shell ${runtimeSettings.shellCommand || '(自动)'}`);
 }

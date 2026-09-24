@@ -3,3 +3,13 @@ node_modules/
 .DS_Store
 
 .vscode/
+
+# agent / skill 工具链产物——不提交
+.claude
+.agent
+.agents
+agent
+agents
+tasks/
+
+skills-lock.json
