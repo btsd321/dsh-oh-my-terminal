@@ -405,13 +405,15 @@ export interface TerminalStateResult {
  * 与 busy/bootReady 合并为单一 TerminalState，通过 terminalReducer 处理所有操作，
  * 消除多 setter 同步遗漏风险。
  *
- * 挂载时拉取 /sessions 恢复所有存活终端实例与组。面板按对话注入，切换工作区会重挂
- * 本组件，实例会丢——但宿主仍持有 PTY。在此恢复（只 attach，绝不 create——无人打开
- * 的挂载不产孤儿 PTY）。bootOnce 守卫防 React 18 严格模式双执行重复拉取。
+ * 挂载时拉取 /sessions 恢复当前 DSH 会话下的所有存活终端实例与组。面板按对话注入，
+ * 切换工作区会重挂本组件，实例会丢——但宿主仍持有 PTY。在此恢复（只 attach，绝不
+ * create——无人打开的挂载不产孤儿 PTY）。bootOnce 守卫防 React 18 严格模式双执行
+ * 重复拉取。
  *
+ * @param sessionId - 当前 DSH 会话 id，用于按会话过滤恢复终端；undefined 时恢复全部
  * @returns state 与 dispatch
  */
-export function useTerminalState(): TerminalStateResult {
+export function useTerminalState(sessionId: string | undefined): TerminalStateResult {
   const { useEffect, useRef, useReducer } = React;
   const [state, dispatch] = useReducer(terminalReducer, INITIAL_STATE);
   /** 恢复已完成标记（防止 React 18 严格模式双执行重复拉取） */
@@ -423,7 +425,9 @@ export function useTerminalState(): TerminalStateResult {
     void (async (): Promise<void> => {
       dispatch({ type: 'SET_BUSY', busy: true });
       try {
-        const list = await api<SessionsResponse>('/sessions');
+        // 按 DSH 会话 id 过滤恢复终端，避免跨会话串扰
+        const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+        const list = await api<SessionsResponse>('/sessions' + query);
         /* 只恢复存活的 PTY 会话——已退出的历史不恢复。
          * DSH 重启后旧 PTY 已死，恢复已退出会话只会显示横杠，
          * 不如让首次打开逻辑自动创建全新终端。 */
@@ -461,7 +465,7 @@ export function useTerminalState(): TerminalStateResult {
         dispatch({ type: 'SET_BOOT_READY' });
       }
     })();
-  }, []);
+  }, [sessionId]);
 
   return { state, dispatch };
 }

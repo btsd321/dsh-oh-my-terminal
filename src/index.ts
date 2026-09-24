@@ -253,6 +253,7 @@ export function apply(ctx: Context): void {
       exitDetail: null,
       wsClients: new Set(),
       bornAt: Date.now(),
+      ownerSessionId: options.sessionId ?? null,
     };
 
     // seed 预写入日志文件（覆盖写；流式追加由 queueLog 负责）
@@ -349,11 +350,12 @@ export function apply(ctx: Context): void {
 
     log.info(`重启会话 ${id}（继承 ${seed.length} 字符缓冲）`);
 
-    // 创建新会话——有 cmdline 时重跑原命令，否则用裸 shell 文件
+    // 创建新会话——有 cmdline 时重跑原命令，否则用裸 shell 文件；继承 ownerSessionId
     const fresh = await createSession({
       ...(typeof old.cmdline === 'string' && old.cmdline.length > 0 ? { cmdline: old.cmdline } : { shell: file }),
       cwd: requestedCwd,
       seed,
+      sessionId: old.ownerSessionId ?? undefined,
     });
     return fresh;
   }

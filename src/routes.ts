@@ -299,10 +299,14 @@ export function createRouteHandler(
     const method = req.method ?? 'GET';
 
     try {
-      // GET /sessions — 列出所有会话（含已退出的历史）
+      // GET /sessions — 列出所有会话（含已退出的历史），支持 ?sessionId= 过滤
       if (rest === '/sessions' && method === 'GET') {
+        const querySessionId = url.searchParams.get('sessionId');
+        const filtered = querySessionId !== null
+          ? [...sessions.values()].filter(s => s.ownerSessionId === querySessionId)
+          : [...sessions.values()];
         json(res, 200, {
-          sessions: [...sessions.values()].map(s => ({
+          sessions: filtered.map(s => ({
             id: s.id,
             title: s.title,
             shell: s.shell,
@@ -310,6 +314,7 @@ export function createRouteHandler(
             cwd: s.cwd,
             exited: s.exited,
             bornAt: s.bornAt,
+            ownerSessionId: s.ownerSessionId ?? null,
           })),
         });
         return;
