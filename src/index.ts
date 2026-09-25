@@ -17,8 +17,9 @@
  *              平台适配器在 {@link module:platform}，会话持久化（日志落盘、
  *              元数据读写、启动恢复）在 {@link module:persistence}，
  *              WebSocket 处理在 {@link module:ws-handler}，HTTP 路由处理在
- *              {@link module:routes}。本文件仅保留 cordis 插件壳、settings 集成、
- *              会话生命周期管理（create/kill/restart）与插件销毁清理。
+ *              {@link module:routes}。本文件保留 cordis 插件壳、包级 Config
+ *              声明（volatile 字段免重启热更新）、会话生命周期管理
+ *              （create/kill/restart）与插件销毁清理。
  *
  * 通道拓扑：
  * ```
@@ -36,9 +37,10 @@
  * 终端输入/输出数据绝不进日志——日志只记会话生命周期事件（创建/退出/重启/删除）与 id。
  */
 
-import type { Context } from '@deepseek-ai/cordis';
+import type { Context, Volatile } from '@deepseek-ai/cordis';
 // schemastery 是 dsh 的 peer 依赖；esbuild external 后运行期从 profile 解析。
-// 用值导入——settings schema 注册需要运行时调用 z.string()/z.object()
+// 用值导入——包级 Config 声明需要运行时调用 z.string()/z.object()（cordis
+// loader 读取插件包的静态 Config 派发配置，settings 表单亦由它投影生成）
 import z from '@deepseek-ai/schemastery';
 // WebSocket 需作为值导入：ws.readyState === WebSocket.OPEN 用到其静态常量
 import { WebSocket } from 'ws';
@@ -111,18 +113,46 @@ async function loadPty(): Promise<PtyModule> {
   }
 }
 
-// —— settings 服务类型 ——
+// —— 插件配置（官方 cordis Config 声明模式） ——
 
 /**
- * settings 服务的最小接口——收口原先 3 层 `as unknown as` 断言链。
- * register 注册 schema 并返回带 watch 的 scope；get 读取当前值。
+ * 插件配置的运行时形状。
+ *
+ * DSH 官方 settings 集成不经过服务方法注册（SettingsForms 没有
+ * register/get API，先前按手写 SettingsService 假想的接口在两代宿主上
+ * 均不成立）：插件在包级导出静态 `Config`（schemastery schema），cordis
+ * loader 实例化时 resolve profile patch 的 config 覆盖并传给
+ * {@link apply}；SettingsForms.describe 自动从 entry 的 schema 投影出
+ * GUI 表单（ns 为 profile 条目 id `terminal-panel`），用户编辑写回
+ * profile patch。
+ *
+ * volatile 字段经 schema `.volatile()` 声明：运行期值是稳定引用
+ * （`.get()` 读当前值），GUI 表单编辑后免重启即时生效。
  */
-interface SettingsService {
-  /** 注册命名空间配置 schema，返回可监听变更的 scope */
-  register(ns: string, schema: unknown): { watch(cb: () => void): void };
-  /** 读取命名空间当前值（未注册时 undefined） */
-  get(ns: string): Record<string, unknown> | undefined;
+export interface Config {
+  /** 展开/收起面板的快捷键（裸监听降级路径；rc.2+ 宿主由 shortcuts 系统接管） */
+  toggleShortcut: Volatile<string | undefined>;
+  /** 新终端的 shell 命令行；空 = 自动探测平台 shell */
+  shellCommand: Volatile<string | undefined>;
 }
+
+/**
+ * 插件配置 schema（包级静态声明，cordis loader 消费）。
+ *
+ * 两字段均 volatile：出现在 DSH 设置界面的插件配置表单（ns =
+ * terminal-panel）里，编辑后免插件重启生效；全字段带 default（3.18 无
+ * optional API，见 CLAUDE.md 约束）。
+ */
+export const Config = z.object({
+  toggleShortcut: z.string()
+    .description('展开/收起终端面板的快捷键。格式：修饰键+键，如 ctrl+` 或 ctrl+j（修饰键：ctrl, shift, alt, meta；键：字母、数字、F1-F12 或命名键如 `、space、enter）。注意：DSH 0.1.7-rc.2 起宿主自带快捷键系统，此处的快捷键仅在旧宿主（无 shortcuts 服务）上生效；新宿主上请在 DSH 设置界面的快捷键页统一配置 terminal-panel.toggle（默认 Ctrl+Shift+`，因为 Ctrl+` 已被自带终端占用）')
+    .default(DEFAULT_TOGGLE_SHORTCUT)
+    .volatile(),
+  shellCommand: z.string()
+    .description('新建终端使用的 shell 命令行，如 bash -l。留空自动探测平台 shell（$SHELL || /bin/bash）。仅应用于新建会话及其重启；已有会话保留其启动命令')
+    .default('')
+    .volatile(),
+});
 
 // —— cordis 插件导出 ——
 
@@ -135,8 +165,9 @@ export const inject = ['webServer'];
  * bundle 激活入口。
  *
  * @param ctx - 远端 dsh 的 cordis 上下文
+ * @param config - cordis loader resolve 后的插件配置（volatile 引用）
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config): void {
   // webServer 服务：注册 HTTP 前缀路由 + per-session WebSocket 升级路由。
   // 属性类型来自官方 @deepseek-ai/dsh-host-webserver 的 cordis Context
   // augmentation（经 ws-handler.ts 的 import type 加载）；运行期实例由
@@ -147,44 +178,28 @@ export function apply(ctx: Context): void {
    *  无 dsh-workspace 的组合中不存在，cwd 解析降级到 process.cwd() */
   const workspaceRegistry = typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : undefined;
 
-  /** 运行时配置：env（ops 覆盖）优先，随后被 settings 文档热更新（未设 env 时） */
+  /**
+   * 运行时配置视图：env（ops 级覆盖）优先，其次 volatile 引用的当前值
+   * （GUI 表单编辑后免重启即时生效，作用于后续会话），最终回落 schema
+   * 默认值。getter 每次访问取最新——volatile 引用 .get() 读的就是配置
+   * 系统的当前生效值，无需自行 watch。
+   */
   const runtimeSettings = {
     /** 展开/收起面板的快捷键 */
-    toggleShortcut: process.env[ENV_TOGGLE_SHORTCUT] ?? DEFAULT_TOGGLE_SHORTCUT,
+    get toggleShortcut(): string {
+      const env = process.env[ENV_TOGGLE_SHORTCUT];
+      if (env !== undefined) return env;
+      const value = config.toggleShortcut.get();
+      return typeof value === 'string' && value.length > 0 ? value : DEFAULT_TOGGLE_SHORTCUT;
+    },
     /** 新终端的 shell 命令行（空 = 自动探测） */
-    shellCommand: process.env[ENV_SHELL_COMMAND] ?? '',
+    get shellCommand(): string {
+      const env = process.env[ENV_SHELL_COMMAND];
+      if (env !== undefined) return env;
+      const value = config.shellCommand.get();
+      return typeof value === 'string' ? value : '';
+    },
   };
-
-  // —— 可选 settings 集成：注册 schema 让 GUI 显示配置表单，编辑热应用到后续会话 ——
-  // env 覆盖故意优先：ops 级覆盖不能被文档编辑静默覆盖
-  ctx.inject(['settings'], (settingsCtx) => {
-    // schemastery 的 z.string()/z.object()——z 是 Schemastery.Static（peer，dsh 提供）
-    const schema = z.object({
-      toggleShortcut: z.string()
-        .description('展开/收起终端面板的快捷键。格式：修饰键+键，如 ctrl+` 或 ctrl+j（修饰键：ctrl, shift, alt, meta；键：字母、数字、F1-F12 或命名键如 `、space、enter）。注意：DSH 0.1.7-rc.2 起宿主自带快捷键系统，此处的快捷键仅在旧宿主（无 shortcuts 服务）上生效；新宿主上请在 DSH 设置界面的快捷键页统一配置 terminal-panel.toggle（默认 Ctrl+Shift+`，因为 Ctrl+` 已被自带终端占用）')
-        .default(DEFAULT_TOGGLE_SHORTCUT),
-      shellCommand: z.string()
-        .description('新建终端使用的 shell 命令行，如 bash -l。留空自动探测平台 shell（$SHELL || /bin/bash）。仅应用于新建会话及其重启；已有会话保留其启动命令')
-        .default(''),
-    });
-    const settingsNs = 'terminal';
-    // 单次断言收口原先 3 层 as unknown as 断言链——后续用类型化变量操作
-    const settings = (settingsCtx as unknown as { settings: SettingsService }).settings;
-    const scope = settings.register(settingsNs, schema);
-    const sync = (): void => {
-      const value = settings.get(settingsNs);
-      if (value === undefined) return;
-      // env 未设时才接受文档值——env 是 ops 级覆盖，不能被文档编辑覆盖
-      if (process.env[ENV_TOGGLE_SHORTCUT] === undefined && typeof value.toggleShortcut === 'string') {
-        runtimeSettings.toggleShortcut = value.toggleShortcut;
-      }
-      if (process.env[ENV_SHELL_COMMAND] === undefined && typeof value.shellCommand === 'string') {
-        runtimeSettings.shellCommand = value.shellCommand;
-      }
-    };
-    sync();
-    scope.watch(sync);
-  });
 
   /** id -> 会话记录 */
   const sessions = new Map<string, SessionRecord>();
