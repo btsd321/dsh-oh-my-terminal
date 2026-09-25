@@ -1,62 +1,103 @@
 # dsh-oh-my-terminal
 
-DSH Web GUI 底部终端面板插件——@lydell/node-pty 驱动的多标签交互式终端。
+[![version](https://img.shields.io/badge/version-0.2.1-blue)](package.json)
+[![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![node](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.0.0-brightgreen)](package.json)
 
-## 安装
+A bottom terminal panel plugin for DSH Web GUI. Powered by `@lydell/node-pty`, it provides multi-session interactive terminals over WebSocket using xterm.js in the browser. Supports Windows ConPTY and POSIX openpty with no local compilation required.
+
+[中文文档](README.zh.md)
+
+## Features
+
+- **Multiple terminal sessions**: manage several sessions simultaneously; a side list replaces the traditional horizontal tab bar, with right-click rename support
+- **Split terminals**: horizontal splits within the same group; a VSCode-style dropdown next to the `+` button (new / split / new by kind)
+- **Session persistence**: sessions survive panel close/reopen and are automatically restored on startup
+- **Configurable shortcut**: toggle the panel with a keyboard shortcut; on DSH 0.1.7-rc.2+ the plugin integrates with the host shortcut system and the panel label updates to reflect the current binding
+- **Resizable panel**: drag the top edge of the panel to adjust its height
+- **Cross-platform**: Windows ConPTY and POSIX openpty are selected automatically by `@lydell/node-pty`; pre-compiled binaries ship with the package, nothing to compile
+- **Configurable shell**: set a custom shell command and arguments
+
+## Installation
+
+This package is not yet published to npm. Install directly from GitHub:
 
 ```bash
-dsh plugin --profile web add dsh-oh-my-terminal
+dsh plugin --profile web add github:btsd321/dsh-oh-my-terminal
 ```
 
-## 功能
+## Configuration
 
-- **多标签终端**：同时打开多个终端会话，tab 切换
-- **WebSocket 实时通信**：@lydell/node-pty 后端 + xterm.js 前端，低延迟输入输出
-- **跨平台**：Windows ConPTY / POSIX openpty，由 @lydell/node-pty 自动选择
-- **快捷键开关**：可配置快捷键呼出/收起终端面板；DSH 0.1.7-rc.2+ 上接入宿主统一快捷键系统，可在 DSH 设置界面改键
-- **拖拽调高**：鼠标拖拽面板上边缘调整高度
-- **会话持久化**：终端会话跨面板开关保持存活
-- **可配置 shell**：自定义 shell 命令与参数
+| Option | Description | Default |
+|---|---|---|
+| `toggleShortcut` | Shortcut to toggle the terminal panel (legacy host only; see below) | `` Ctrl+` `` |
+| `shellCommand` | Shell command for new terminals | System default (bash / PowerShell) |
 
-## 配置
+## DSH 0.1.7-rc.2 shortcut changes
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `toggleShortcut` | 呼出/收起终端面板的快捷键（仅旧宿主生效，见下方适配说明） | `` Ctrl+` `` |
-| `shellCommand` | 终端使用的 shell 命令 | 系统默认（bash/PowerShell） |
+DSH 0.1.7-rc.2 introduced a host-level shortcut system. Its built-in terminal (`` Ctrl+` `` via `terminal.new`) conflicts with the previous default. To avoid double-triggering, this plugin changed its behavior starting with the rc.2-compatible release:
 
-## DSH 0.1.7-rc.2 快捷键适配说明
+- **Integrated with shortcuts system**: the plugin registers the `terminal-panel.toggle` command with a default binding of `` Ctrl+Shift+` `` (no default on `web:linux`; bind it manually in DSH settings). Change the key in DSH Settings - Keyboard Shortcuts; the panel label updates automatically
+- **Legacy host (0.1.7-rc.1 and earlier)**: falls back to a bare `` Ctrl+` `` listener; the `toggleShortcut` setting still applies
+- **Migration note**: after upgrading the host, `` Ctrl+` `` opens the built-in terminal (side panel). Use `` Ctrl+Shift+` `` for this plugin's panel. To reclaim `` Ctrl+` `` for this plugin, first remove the built-in terminal's binding in DSH keyboard settings
 
-DSH 0.1.7-rc.2 起宿主自带全局快捷键系统，其自带终端（右侧栏 `terminal.new` 命令）占用了 `Ctrl+\``。为避免同一按键双重响应，本插件自 rc.2 适配版起：
-
-- **接入 shortcuts 系统**：插件注册 `terminal-panel.toggle` 命令，默认绑定 **`Ctrl+Shift+\``**（`web:linux` 无默认键，需在设置界面自行绑定）。改键统一在 DSH 设置 → 快捷键中进行，面板提示标签跟随当前生效绑定
-- **旧宿主（0.1.7-rc.1 及更早）**：自动降级为裸 `Ctrl+\`` 监听，`toggleShortcut` 配置（settings 文档 / 环境变量）照常生效
-- **迁移指引**：旧宿主上配置过 `ctrl+\`` 的用户升级宿主后，`Ctrl+\`` 归自带终端（侧栏新开终端 tab），插件面板切换用 `Ctrl+Shift+\``；如需改回 `Ctrl+\``，请先在 DSH 快捷键设置中解除自带终端的绑定
-
-## 开发
+## Development
 
 ```bash
-# 安装依赖（@lydell/node-pty 自带各平台预编译二进制，装完即用，无需本地编译）
+# Install dependencies (@lydell/node-pty ships pre-compiled binaries — ready to use immediately)
 pnpm install
 
-# 类型检查
+# Type check
 pnpm run typecheck
 
-# 构建（esbuild 双入口 → lib/）
+# Build (esbuild, two entry points, output to lib/)
 pnpm run build
 
-# 单元测试
+# Unit tests
 pnpm exec tsx --test tests/unit/*.test.ts
 ```
 
-### 原生依赖说明
+> Use `pnpm`, not `npm`. Peer dependencies pin exact versions; npm's incremental resolution on an existing tree will produce ERESOLVE errors.
 
-终端能力来自 `@lydell/node-pty`（microsoft/node-pty 的预编译分发版，API 同源），版本精确钉在 `1.1.0`，不用 `^`：该包 `dist-tags.latest` 指向 1.2.0-beta 系列，浮动范围会取到 beta。
+### About the build output
 
-它是 N-API 产物，二进制按平台拆成六个子包随 tarball 分发，安装期不下载、不编译，同一份二进制同时支持 Node 22 与 Node 24。其 `package.json` 中不存在 `scripts` 字段，因此安装时不涉及任何构建脚本授权判断——这正是它在 pnpm 10、11、12 上行为一致、都能装成功的原因。
+`lib/` is committed to version control. The DSH loader imports plugins as plain ESM; it does not run tsx. This repo also declares no lifecycle scripts (`prepare`, `postinstall`, etc.) because pnpm 11 rejects git-hosted packages that declare install-time scripts with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. Run `pnpm run build` manually and commit the output alongside source.
 
-宿主半对它是懒加载（首次创建会话时才 `import()`）：原生绑定若加载失败，异常只影响会话创建，不会让插件模块本身导入失败。
+### Native dependency notes
+
+Terminal capability comes from `@lydell/node-pty` (a pre-compiled distribution of microsoft/node-pty with the same API), pinned exactly to `1.1.0`. The `^` range is intentionally omitted: the package's `dist-tags.latest` points at the 1.2.0-beta series.
+
+It is an N-API package. Binaries are split into six platform sub-packages and shipped inside the tarball; no download or compilation happens at install time. A single binary supports both Node 22 and Node 24. Its `package.json` has no `scripts` field at all, so pnpm 10, 11, and 12 never enter the build-authorization path, giving consistent behavior across versions.
+
+The host side lazy-loads the package (`await import()` on first session creation). If the native binding fails to load, the error is contained to session creation; the plugin module itself remains importable and all other routes stay available.
+
+## Architecture overview
+
+```
+src/
+├── index.ts          # Host entry (Cordis plugin + settings + session lifecycle)
+├── routes.ts         # HTTP route handlers
+├── ws-handler.ts     # WebSocket handler (pty data forwarding)
+├── client.tsx        # Browser entry (React components + plugin registration)
+├── client/
+│   ├── types.ts      # Shared types
+│   ├── hooks.ts      # useReducer state management + custom hooks
+│   ├── term-pane.tsx # xterm.js terminal pane component
+│   ├── dropdown.tsx  # Dropdown menu next to the + button
+│   ├── side-list.tsx # Right-side terminal list panel
+│   ├── styles.ts     # CSS constants + Campbell dark theme
+│   ├── icons.tsx     # SVG icon components
+│   └── clipboard.ts  # Clipboard utility functions
+├── persistence.ts    # Session persistence (log storage, metadata, startup restore)
+├── platform.ts       # Platform adapter (POSIX / Windows + shell detection)
+├── constants.ts      # Protocol, size, shortcut, and env var constants
+├── server-command.ts # Command-line parsing utilities
+├── shortcut.ts       # Shortcut parsing utilities
+└── logger.ts         # Structured logger
+```
+
+The host side and browser side communicate over WebSocket at `/api/dsh-remote-terminal` and do not import each other directly.
 
 ## License
 
-Apache License 2.0
+[Apache-2.0](LICENSE)
