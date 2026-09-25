@@ -1,6 +1,6 @@
 {
   "name": "dsh-oh-my-terminal",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH Web GUI 底部终端面板插件——node-pty 驱动的多标签交互式终端（Windows ConPTY / POSIX openpty）",
   "type": "module",
   "license": "Apache-2.0",
