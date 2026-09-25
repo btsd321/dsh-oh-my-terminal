@@ -96,7 +96,7 @@ src/
 └── logger.ts         # Structured logger
 ```
 
-The host side and browser side communicate over WebSocket at `/api/dsh-remote-terminal` and do not import each other directly.
+The host side and browser side communicate over WebSocket at `/api/dsh-oh-my-terminal` and do not import each other directly.
 
 ## License
 
