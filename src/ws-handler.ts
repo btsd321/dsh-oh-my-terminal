@@ -5,8 +5,13 @@
  *              upgradeDisposers Map），返回 handleWsMessage / handleWsConnection /
  *              registerSessionWs 三个闭包函数。
  *
- *              同时导出 webServer 服务的最小接口类型（WebServerService、WebRouteDef、
- *              WebUpgradeRouteDef），供 index.ts 和 routes.ts 引用，避免重复定义。
+ *              webServer 服务的路由与升级路由类型直接采用官方
+ *              @deepseek-ai/dsh-host-webserver（0.1.7-rc.2，devDependencies 提供
+ *              类型源）并 re-export 供 index.ts 等模块共享——import type 构建
+ *              期擦除，插件产物不携带对该包的运行时引用，运行期由宿主提供
+ *              webServer 服务实例。官方 d.ts 同时声明 cordis Context 的
+ *              webServer 属性增强（augmentation），index.ts 据此直接访问
+ *              ctx.webServer，无需本地 interface 扩展。
  *
  * 安全约束：
  * - WebSocket 升级只走已鉴权通道（同源检查），未通过检查的连接直接 destroy
@@ -16,41 +21,16 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
+// import type：构建期擦除（esbuild 对 import type 100% 剔除），宿主半构建的
+// external @deepseek-ai/* 双保险——运行期服务实例由 dsh 宿主提供
+import type { WebServer, WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver';
 import { WebSocketServer, WebSocket } from 'ws';
 import { ROUTE_PREFIX } from './constants.js';
 import type { SessionRecord } from './persistence.js';
 
-// —— webServer 类型定义（从 index.ts 提取，供多模块共享）——
+// —— webServer 类型（官方定义，re-export 供多模块共享）——
 
-/**
- * webServer 服务的最小接口（完整定义见 @deepseek-ai/dsh-host-webserver）。
- * @deepseek-ai/cordis 的公开类型可能不包含 webServer 属性，用局部 interface 扩展
- * Context，使 ctx.webServer.register/registerUpgrade 通过类型检查。
- */
-export interface WebServerService {
-  /** 注册命名路由（kind: 'exact'|'prefix'）；重复 (kind, path) 抛错 */
-  register(route: WebRouteDef): () => void;
-  /** 注册精确路径 HTTP 升级路由；重复路径抛错（一个 socket 只能有一个协议拥有者） */
-  registerUpgrade(route: WebUpgradeRouteDef): () => void;
-}
-
-/** 一条命名路由定义 */
-export interface WebRouteDef {
-  /** 匹配方式：'exact' 精确匹配路径名；'prefix' 匹配 p 和 p/<anything> */
-  kind: 'exact' | 'prefix';
-  /** 绝对路径名，无尾斜杠 */
-  path: string;
-  /** 拥有完整响应生命周期（可 hold 住响应，如 SSE） */
-  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-}
-
-/** 一条精确路径 HTTP 升级路由定义 */
-export interface WebUpgradeRouteDef {
-  /** 绝对路径名，无尾斜杠 */
-  path: string;
-  /** 拥有协议协商和升级后的 socket 使用权 */
-  handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void | Promise<void>;
-}
+export type { WebServer, WebRoute, WebUpgradeRoute };
 
 // —— 同源检查工具（WS 升级路由使用）——
 
@@ -78,8 +58,8 @@ function sameOrigin(req: IncomingMessage): boolean {
 
 /** WebSocket 处理器的依赖 */
 export interface WsHandlerDeps {
-  /** webServer 服务 */
-  webServer: WebServerService;
+  /** webServer 服务（官方 @deepseek-ai/dsh-host-webserver 的 WebServer 类型） */
+  webServer: WebServer;
   /** 会话 Map */
   sessions: Map<string, SessionRecord>;
   /** WS 路由 disposer Map */

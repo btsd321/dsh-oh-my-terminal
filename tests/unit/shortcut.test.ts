@@ -1,12 +1,13 @@
 /**
  * @file shortcut.ts 单元测试
  * @description 覆盖 parseShortcut 与 matchesShortcut 的基本功能、修饰键别名、
- *              命名键、功能键、无效输入与边界情况。
+ *              命名键、功能键、无效输入与边界情况，以及 shouldHandleShortcut
+ *              的 defaultPrevented 短路契约。
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseShortcut, matchesShortcut, type ShortcutSpec } from '../../src/shortcut.js';
+import { parseShortcut, matchesShortcut, shouldHandleShortcut, type ShortcutSpec } from '../../src/shortcut.js';
 
 // —— 构造 KeyboardEvent 的辅助函数（node:test 环境无 DOM，手动构造最小对象） ——
 
@@ -15,11 +16,13 @@ import { parseShortcut, matchesShortcut, type ShortcutSpec } from '../../src/sho
  *
  * @param code - KeyboardEvent.code
  * @param mods - 修饰键状态
+ * @param defaultPrevented - 事件是否已被其他组件消费
  * @returns 伪事件对象
  */
 function fakeEvent(
   code: string,
   mods: { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean } = {},
+  defaultPrevented = false,
 ): KeyboardEvent {
   return {
     code,
@@ -27,6 +30,7 @@ function fakeEvent(
     shiftKey: !!mods.shift,
     altKey: !!mods.alt,
     metaKey: !!mods.meta,
+    defaultPrevented,
   } as KeyboardEvent;
 }
 
@@ -325,6 +329,43 @@ describe('matchesShortcut', () => {
       const spec: ShortcutSpec = { ctrl: true, shift: false, alt: false, meta: false, code: null, label: null };
       const ev = fakeEvent('KeyJ', { ctrl: true });
       assert.equal(matchesShortcut(spec, ev), true);
+    });
+  });
+});
+
+describe('shouldHandleShortcut', () => {
+  // ─── 未被消费的事件：透传 matchesShortcut ──────────────────
+  describe('未被消费的事件', () => {
+    it('命中的未消费事件返回 true', () => {
+      const spec = parseShortcut('ctrl+`');
+      const ev = fakeEvent('Backquote', { ctrl: true });
+      assert.equal(shouldHandleShortcut(spec, ev), true);
+    });
+
+    it('未命中的事件返回 false', () => {
+      const spec = parseShortcut('ctrl+`');
+      const ev = fakeEvent('KeyJ', { ctrl: true });
+      assert.equal(shouldHandleShortcut(spec, ev), false);
+    });
+
+    it('null spec 返回 false', () => {
+      const ev = fakeEvent('Backquote', { ctrl: true });
+      assert.equal(shouldHandleShortcut(null, ev), false);
+    });
+  });
+
+  // ─── 已被消费的事件：无条件短路 ───────────────────────────
+  describe('已被消费的事件（defaultPrevented）', () => {
+    it('DSH shortcuts 已消费的键不再触发插件（防 Ctrl+` 双重响应）', () => {
+      const spec = parseShortcut('ctrl+`');
+      const ev = fakeEvent('Backquote', { ctrl: true }, true);
+      assert.equal(shouldHandleShortcut(spec, ev), false);
+    });
+
+    it('其他组件消费过的任意命中组合均短路', () => {
+      const spec = parseShortcut('ctrl+j');
+      const ev = fakeEvent('KeyJ', { ctrl: true }, true);
+      assert.equal(shouldHandleShortcut(spec, ev), false);
     });
   });
 });

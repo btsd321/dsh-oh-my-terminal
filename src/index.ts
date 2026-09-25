@@ -54,7 +54,6 @@ import { platform } from './platform.js';
 import { SessionStore } from './persistence.js';
 import type { SessionRecord } from './persistence.js';
 import { createWsHandlers } from './ws-handler.js';
-import type { WebServerService } from './ws-handler.js';
 import { createRouteHandler } from './routes.js';
 import type { CreateSessionOptions } from './routes.js';
 import { makeId, getSessionCounter, resolveSpawn, resolveSessionCwd } from './routes.js';
@@ -125,12 +124,6 @@ interface SettingsService {
   get(ns: string): Record<string, unknown> | undefined;
 }
 
-/** 扩展了 webServer 属性的 cordis 上下文 */
-interface TerminalContext extends Context {
-  /** 远端 dsh 的 HTTP/WebSocket 服务 */
-  webServer: WebServerService;
-}
-
 // —— cordis 插件导出 ——
 
 export const name = PKG_NAME;
@@ -144,10 +137,11 @@ export const inject = ['webServer'];
  * @param ctx - 远端 dsh 的 cordis 上下文
  */
 export function apply(ctx: Context): void {
-  // webServer 服务可能不在 cordis 公开类型里——用局部 interface 扩展的 ctx2 访问
-  const ctx2 = ctx as TerminalContext;
-  // webServer 服务：注册 HTTP 前缀路由 + per-session WebSocket 升级路由
-  const webServer = ctx2.webServer;
+  // webServer 服务：注册 HTTP 前缀路由 + per-session WebSocket 升级路由。
+  // 属性类型来自官方 @deepseek-ai/dsh-host-webserver 的 cordis Context
+  // augmentation（经 ws-handler.ts 的 import type 加载）；运行期实例由
+  // dsh 宿主的 webServer 服务提供
+  const webServer = ctx.webServer;
 
   /** 可选的 DSH workspace 注册表——权威的 session -> 工作区路径索引。
    *  无 dsh-workspace 的组合中不存在，cwd 解析降级到 process.cwd() */
@@ -167,7 +161,7 @@ export function apply(ctx: Context): void {
     // schemastery 的 z.string()/z.object()——z 是 Schemastery.Static（peer，dsh 提供）
     const schema = z.object({
       toggleShortcut: z.string()
-        .description('展开/收起终端面板的快捷键。格式：修饰键+键，如 ctrl+` 或 ctrl+j（修饰键：ctrl, shift, alt, meta；键：字母、数字、F1-F12 或命名键如 `、space、enter）')
+        .description('展开/收起终端面板的快捷键。格式：修饰键+键，如 ctrl+` 或 ctrl+j（修饰键：ctrl, shift, alt, meta；键：字母、数字、F1-F12 或命名键如 `、space、enter）。注意：DSH 0.1.7-rc.2 起宿主自带快捷键系统，此处的快捷键仅在旧宿主（无 shortcuts 服务）上生效；新宿主上请在 DSH 设置界面的快捷键页统一配置 terminal-panel.toggle（默认 Ctrl+Shift+`，因为 Ctrl+` 已被自带终端占用）')
         .default(DEFAULT_TOGGLE_SHORTCUT),
       shellCommand: z.string()
         .description('新建终端使用的 shell 命令行，如 bash -l。留空自动探测平台 shell（$SHELL || /bin/bash）。仅应用于新建会话及其重启；已有会话保留其启动命令')

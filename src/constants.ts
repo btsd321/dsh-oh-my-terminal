@@ -9,6 +9,10 @@
  *              注释里标明兼容性影响。
  */
 
+// import type：构建期擦除（esbuild 对 import type 100% 剔除），插件产物不携带
+// 对 dsh-* 包的运行时引用——宿主半 external @deepseek-ai/*，浏览器半自包含 bundle
+import type { ShortcutCommand } from '@deepseek-ai/dsh-client-shortcuts/client';
+
 /** 插件包名（cordis 插件导出名，与 package.json name 一致） */
 export const PKG_NAME = 'dsh-oh-my-terminal';
 
@@ -41,8 +45,32 @@ export const DEFAULT_ROWS = 24;
 /** 日志落盘合并窗口（毫秒）——pty.onData 高频回调，合并写盘避免 IO 风暴 */
 export const LOG_FLUSH_MS = 250;
 
-/** 默认展开/收起快捷键 */
+/** 默认展开/收起快捷键（裸监听降级路径；DSH 0.1.7-rc.2+ 上由 shortcuts 命令接管） */
 export const DEFAULT_TOGGLE_SHORTCUT = 'ctrl+`';
+
+/**
+ * 在 DSH shortcuts 系统注册的"切换终端面板"命令 id。
+ * DSH 0.1.7-rc.2 起宿主自带终端（terminal.new）占用 Ctrl+`，本插件改注册
+ * 独立命令并让键位统一在 DSH 设置界面配置。
+ */
+export const SHORTCUT_COMMAND_ID = 'terminal-panel.toggle';
+
+/**
+ * terminal-panel.toggle 的默认绑定：Ctrl+Shift+`（primary+shift + Backquote）。
+ *
+ * - 不能用 Ctrl+`：与 terminal.new 冲突，shortcuts 注册时对重叠默认绑定抛错
+ * - web:linux 不声明：官方 web 快捷键白名单（isWebBindingAllowed）对 Linux
+ *   只放行 Slash/Comma/Period 组合，Backquote 组合会被拒；缺失 profile 表示
+ *   该环境无默认键，用户可在 DSH 设置界面自行绑定（web:macos/web:windows
+ *   经 primary+shift 双修饰通道放行 Backquote）
+ */
+export const SHORTCUT_DEFAULTS: ShortcutCommand['defaults'] = {
+  'desktop:macos': { code: 'Backquote', modifiers: ['primary', 'shift'] },
+  'desktop:windows': { code: 'Backquote', modifiers: ['primary', 'shift'] },
+  'desktop:linux': { code: 'Backquote', modifiers: ['primary', 'shift'] },
+  'web:macos': { code: 'Backquote', modifiers: ['primary', 'shift'] },
+  'web:windows': { code: 'Backquote', modifiers: ['primary', 'shift'] },
+};
 
 /** 切换快捷键环境变量名（ops 级覆盖，优先于 settings 文档） */
 export const ENV_TOGGLE_SHORTCUT = 'DSH_PLUGIN_TERMINAL_TOGGLE_SHORTCUT';
