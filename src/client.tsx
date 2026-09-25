@@ -30,12 +30,16 @@
  * - `client/hooks.ts` — 自定义 Hooks（usePanelHeight/usePanelGeometry/useTerminalState/useConfig/useTerminalTabs）
  * - `client/styles.ts` — CSS 常量、Campbell 主题、PANEL_CSS、injectStyles()
  * - `client/term-pane.tsx` — TermPane（xterm + WebSocket 核心）、RestartButton
- * - 本文件保留：TerminalPanel（组合壳）、插件注册
+ * - `client/shortcut-bridge.ts` — shortcuts 服务接入信号桥（命令注册状态 + 面板切换回调）
+ * - 本文件保留：TerminalPanel（组合壳）、插件注册、shortcuts 命令注册
  */
 
 import * as React from 'react';
 import type { ReactElement } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
+// import type：构建期擦除，浏览器 bundle 不携带对官方包的运行时引用——
+// shortcuts 服务实例由宿主运行期提供，插件只消费其方法与类型
+import type { Shortcuts, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client';
 // 子模块导入——esbuild 打包浏览器 bundle 时内联进 client.js
 import {
   TerminalGlyph14, TerminalGlyph12,
@@ -50,6 +54,11 @@ import {
 } from './client/hooks.js';
 import { injectStyles } from './client/styles.js';
 import { TermPane, RestartButton } from './client/term-pane.js';
+import {
+  resetShortcutsState, markShortcutsActive,
+  registerPanelToggler, notifyPanelToggle,
+} from './client/shortcut-bridge.js';
+import { SHORTCUT_COMMAND_ID, SHORTCUT_DEFAULTS } from './constants.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('terminal-client');
@@ -98,13 +107,64 @@ export const inject = ['slots'];
 /**
  * 浏览器半激活入口：在对话区底部注册终端面板。
  *
+ * DSH 0.1.7-rc.2+ 宿主上额外把面板切换注册进官方 shortcuts 系统（键位可在
+ * DSH 设置界面统一配置）；旧宿主无 shortcuts 服务时软探测不命中，维持裸
+ * keydown 降级路径。
+ *
  * @param ctx - 远端页面的 cordis 上下文
  */
 export function apply(ctx: ClientContext): void {
+  registerToggleShortcut(ctx);
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
     { name: 'conversation.input.dock', id: 'terminal', order: 10 },
     TerminalPanel,
   ));
+}
+
+/**
+ * 向宿主 shortcuts 服务注册"切换终端面板"命令（软探测，幂等降级）。
+ *
+ * 流程：复位桥状态 → ctx.get('shortcuts') 软探测 → 注册官方
+ * ShortcutCommand → ctx.effect 登记注销 → 标记接入成功。任一步不成立都
+ * 静默降级为裸 keydown 路径（旧宿主或注册失败时面板功能不受影响）。
+ *
+ * 为什么不把 'shortcuts' 写进顶层 inject：硬依赖会让旧宿主（无该服务）
+ * 上插件浏览器半直接不激活。ctx.get 软探测与宿主半 workspaceRegistry
+ * 的接入模式一致。
+ *
+ * @param ctx - 远端页面的 cordis 上下文
+ */
+function registerToggleShortcut(ctx: ClientContext): void {
+  // 每次激活先复位：插件重载（dispose → re-apply）时清除上轮残留，
+  // 本轮注册失败时裸监听降级路径才能恢复生效
+  resetShortcutsState();
+  // 软探测 cordis get：旧宿主（0.1.7-rc.1 前）没有 shortcuts 服务
+  const service = typeof ctx.get === 'function' ? ctx.get('shortcuts') : undefined;
+  if (service === undefined || typeof (service as Shortcuts).register !== 'function') return;
+  const shortcuts = service as Shortcuts;
+  try {
+    const dispose = shortcuts.register({
+      id: SHORTCUT_COMMAND_ID as ShortcutCommandId,
+      label: () => '切换终端面板',
+      aliases: ['terminal panel', 'toggle terminal panel'],
+      defaults: SHORTCUT_DEFAULTS,
+      // 不含 'terminal'：焦点在本面板 xterm 内时按键留给 shell——与裸监听
+      // 路径的既有语义一致；官方按 .xterm closest 判定 region，本面板命中
+      // 'terminal'，天然不触发
+      regions: ['page', 'editable'],
+      modals: [],
+      resolve: () => ({ status: 'handled', run: notifyPanelToggle }),
+    });
+    // 命令随插件销毁注销（官方 register 返回幂等 disposer）
+    ctx.effect(() => dispose, 'dsh-oh-my-terminal.shortcut');
+    // 保存 catalog 供快捷键标签读取用户改键后的当前生效绑定
+    markShortcutsActive(shortcuts.catalog);
+    log.info(`已接入 DSH shortcuts 服务（命令 ${SHORTCUT_COMMAND_ID}）`);
+  } catch (error) {
+    // 注册抛错（如默认绑定与未来 DSH 版本的命令冲突）→ 降级为裸 keydown 路径
+    const msg = error instanceof Error ? error.message : String(error);
+    log.warn(`shortcuts 命令注册失败，降级为裸 keydown 监听：${msg}`);
+  }
 }
 
 // —— TerminalPanel 主组件 ——
@@ -192,6 +252,11 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
 
   /** 切换展开/折叠 */
   const toggle = useCallback((): void => setOpen(v => !v), []);
+
+  /* 挂载期间把切换回调注册进 shortcuts 桥：命令命中时驱动本面板。
+   * 注册/注销成对（useEffect cleanup 返回注销函数），toggle 是 useCallback
+   * 稳定引用，effect 不重复执行 */
+  useEffect(() => registerPanelToggler(toggle), [toggle]);
 
   /** 状态标签（bar 与头部共用） */
   const stateLabel = busy

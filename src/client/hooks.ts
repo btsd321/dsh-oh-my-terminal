@@ -22,7 +22,9 @@
  */
 
 import * as React from 'react';
-import { parseShortcut, matchesShortcut, type ShortcutSpec } from '../shortcut.js';
+import { parseShortcut, shouldHandleShortcut, type ShortcutSpec } from '../shortcut.js';
+import { isShortcutsActive, getShortcutsCatalog } from './shortcut-bridge.js';
+import { SHORTCUT_COMMAND_ID } from '../constants.js';
 import { createLogger } from '../logger.js';
 import type {
   TerminalInstance, TerminalGroup,
@@ -488,6 +490,12 @@ export interface ConfigResult {
  * 消除原先 usePanelShortcut 与 client.tsx 分别拉取 /config 的双次请求问题。
  * 路由缺失时（旧宿主）回落默认值。
  *
+ * 快捷键双轨：
+ * - DSH 0.1.7-rc.2+ 且 shortcuts 命令注册成功：实际生效绑定以官方 catalog
+ *   为准（用户可在 DSH 设置界面改键），裸 keydown 监听停用
+ * - 未接入（旧宿主或注册失败降级）：裸 keydown 监听 /config 下发的
+ *   toggleShortcut（settings/env 依旧生效）
+ *
  * @param setOpen - 展开/折叠 state setter（keydown 命中时切换）
  * @returns 快捷键 spec、显示标签、终端种类列表
  */
@@ -496,7 +504,9 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
   const defaultShortcut = parseShortcut(DEFAULT_SHORTCUT_STR);
   const [shortcut, setShortcut] = useState<ShortcutSpec | null>(defaultShortcut);
   const [terminalTypes, setTerminalTypes] = useState<TerminalType[]>([]);
-  const shortcutLabel = shortcut?.label ?? 'Ctrl+`';
+  /* shortcuts 接入后的当前生效绑定标签；未接入时 null（走 shortcut.label） */
+  const [catalogLabel, setCatalogLabel] = useState<string | null>(null);
+  const shortcutLabel = catalogLabel ?? shortcut?.label ?? 'Ctrl+`';
 
   /* 一次拉取 /config，同时填充快捷键和终端种类 */
   useEffect(() => {
@@ -519,10 +529,32 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
     })();
   }, []);
 
-  /* 全局 keydown 监听：命中快捷键时切换面板 */
+  /* 接入 shortcuts 后实际生效绑定以官方 catalog 为准（用户改键即时反映）。
+   * 官方 entry.keys 是预格式化键帽数组（Windows 平台内含 '+' 分隔元素），
+   * 过滤分隔元素后 '+' 连接即为展示标签——无需自行格式化绑定 */
   useEffect(() => {
+    const catalog = getShortcutsCatalog();
+    if (catalog === undefined) return;
+    const read = (): void => {
+      const row = catalog.getSnapshot().find(entry => entry.id === SHORTCUT_COMMAND_ID);
+      // 未绑定（用户清空或 web:linux 无默认键）给出提示而非空标签
+      setCatalogLabel(row === undefined || row.binding === null
+        ? '未绑定'
+        : row.keys.filter(k => k !== '+').join('+'));
+    };
+    read();
+    const unsubscribe = catalog.subscribe(read);
+    return () => { unsubscribe(); };
+  }, []);
+
+  /* 全局 keydown 监听：命中快捷键时切换面板（未接入 shortcuts 的降级路径）。
+   * shouldHandleShortcut 先短路 defaultPrevented——DSH shortcuts 或其他组件
+   * 已消费的键不再触发，避免同一按键双重响应；接入 shortcuts 后命令由
+   * 官方系统分发（面板切换经 shortcut-bridge 的 togglers 驱动），本监听停用 */
+  useEffect(() => {
+    if (isShortcutsActive()) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (!matchesShortcut(shortcut, e)) return;
+      if (!shouldHandleShortcut(shortcut, e)) return;
       /* 终端 pane 内聚焦时不触发（留给 shell）——当快捷键是终端也消费的控制字符
        * （如 Ctrl+J 换行）时避免误切面板 */
       if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
