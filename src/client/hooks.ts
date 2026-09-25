@@ -53,7 +53,7 @@ const MAX_HEIGHT_RATIO = 0.78;
 const DEFAULT_HEIGHT_RATIO = 0.36;
 
 /** 默认切换快捷键字符串 */
-const DEFAULT_SHORTCUT_STR = 'ctrl+`';
+const DEFAULT_SHORTCUT_STR = 'ctrl+shift+`';
 
 // —— API 辅助函数（仅 hooks 内部使用） ——
 
@@ -506,7 +506,7 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
   const [terminalTypes, setTerminalTypes] = useState<TerminalType[]>([]);
   /* shortcuts 接入后的当前生效绑定标签；未接入时 null（走 shortcut.label） */
   const [catalogLabel, setCatalogLabel] = useState<string | null>(null);
-  const shortcutLabel = catalogLabel ?? shortcut?.label ?? 'Ctrl+`';
+  const shortcutLabel = catalogLabel ?? shortcut?.label ?? 'Ctrl+Shift+`';
 
   /* 一次拉取 /config，同时填充快捷键和终端种类 */
   useEffect(() => {
