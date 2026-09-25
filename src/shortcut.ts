@@ -121,3 +121,22 @@ export function matchesShortcut(spec: ShortcutSpec | null, ev: KeyboardEvent): b
     && ev.altKey === spec.alt
     && ev.metaKey === spec.meta;
 }
+
+/**
+ * 判断一个 KeyboardEvent 是否应由本插件响应（命中且未被其他组件消费）。
+ *
+ * DSH 0.1.7-rc.2 起宿主自带全局快捷键系统（dsh-client-shortcuts），其 window
+ * 级 keydown 监听先于本插件面板挂载注册，命中命令后会调用 preventDefault。
+ * 已被消费的事件（defaultPrevented=true）不得再触发本插件的裸监听降级路径
+ * ——否则同一按键双重响应（如 Ctrl+` 同时切换本面板与 DSH 自带终端侧栏）。
+ * 与官方 ShortcutRegistry.dispatch 的 gesture.defaultPrevented 前置检查同
+ * 一契约，此处是插件裸监听路径的对应实现。
+ *
+ * @param spec - parseShortcut 的返回值
+ * @param ev - keydown 事件
+ * @returns 命中快捷键且事件未被消费时 true
+ */
+export function shouldHandleShortcut(spec: ShortcutSpec | null, ev: KeyboardEvent): boolean {
+  if (ev.defaultPrevented) return false;
+  return matchesShortcut(spec, ev);
+}
