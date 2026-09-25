@@ -356,7 +356,7 @@ get currentSession(): TerminalSession | undefined {
 1. **插件形态必须构建。** dsh loader 经纯 ESM import 加载插件、不走 tsx，所以必须用 `scripts/build.ts` 产出 `lib/`（含 `index.js` + `client.js` + `xterm.css`）。`lib/` 纳入版本控制——**禁止声明生命周期脚本**（`prepare`/`postinstall` 等一概不加），pnpm 11 对声明了安装类脚本的 git-hosted 包直接报 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`，拦截只看 `package.json` 字段、不看脚本内容。选依赖同理——`@lydell/node-pty` 的 `package.json` 连 `scripts` 字段都不存在，pnpm 10/11/12 都不会对它做构建授权判断。构建由开发者手动 `pnpm run build`，产物随源码一起提交。
 2. **改代码后跑类型检查**：`pnpm run typecheck`。不要让类型错误总数变多。
 3. **新增运行时依赖必须写进 `package.json`**，版本锁定或用窄范围。`node_modules` 里有不等于已声明。
-4. **协议与命名常量不可单方面修改**：路由前缀（`/api/dsh-remote-terminal`）、slash 命令名、插件 id 改动必须同步 cordis.patch.yml 与构建脚本，并在注释里标明兼容性影响。
+4. **协议与命名常量不可单方面修改**：路由前缀（`/api/dsh-oh-my-terminal`）、slash 命令名、插件 id 改动必须同步 cordis.patch.yml 与构建脚本，并在注释里标明兼容性影响。
 5. **跨平台**：`@lydell/node-pty` 自动按平台选 ConPTY（Windows）或 openpty（POSIX），不需要手动处理平台差异。该包版本精确钉在 `1.1.0`（上游 `latest` 指向 beta），六个平台子包自带 N-API 二进制，安装期不编译。
 6. **不落明文凭据**：日志和错误消息不打印密钥、口令内容。
 7. **终端数据绝不进日志**：pty 输出与 WebSocket 数据帧是用户会话内容，不写日志。

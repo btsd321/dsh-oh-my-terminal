@@ -23,12 +23,12 @@
  *
  * 通道拓扑：
  * ```
- * 远端页面 ──同源 Cookie 鉴权──▶ /api/dsh-remote-terminal/*（HTTP 路由）
+ * 远端页面 ──同源 Cookie 鉴权──▶ /api/dsh-oh-my-terminal/*（HTTP 路由）
  *   （浏览器）                     └─ /sessions（GET 列表/POST 创建/DELETE 删除）
  *                                  └─ /sessions/:id/restart（POST 重启，继承滚动缓冲）
  *                                  └─ /config（GET 插件配置 + 终端种类列表）
  *                                  └─ /xterm.css（GET xterm 样式表）
- *                               /api/dsh-remote-terminal/ws/<id>（WebSocket 升级路由）
+ *                               /api/dsh-oh-my-terminal/ws/<id>（WebSocket 升级路由）
  *                                  └─ 连接时回放 buffer → 实时 pty.onData → ws.send
  *                                  └─ 客户端纯文本 = stdin，{"type":"resize"} = resize
  *                                  └─ 同源检查（sameOrigin）

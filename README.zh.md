@@ -94,7 +94,7 @@ src/
 └── logger.ts         # 统一日志工具
 ```
 
-宿主半与浏览器半经 WebSocket 通信，路由前缀 `/api/dsh-remote-terminal`，不直接 import。
+宿主半与浏览器半经 WebSocket 通信，路由前缀 `/api/dsh-oh-my-terminal`，不直接 import。
 
 ## License
 
