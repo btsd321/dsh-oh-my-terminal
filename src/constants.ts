@@ -46,7 +46,7 @@ export const DEFAULT_ROWS = 24;
 export const LOG_FLUSH_MS = 250;
 
 /** 默认展开/收起快捷键（裸监听降级路径；DSH 0.1.7-rc.2+ 上由 shortcuts 命令接管） */
-export const DEFAULT_TOGGLE_SHORTCUT = 'ctrl+`';
+export const DEFAULT_TOGGLE_SHORTCUT = 'ctrl+shift+`';
 
 /**
  * 在 DSH shortcuts 系统注册的"切换终端面板"命令 id。
