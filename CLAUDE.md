@@ -92,7 +92,7 @@ src/
   client/side-list.tsx → client/types.ts, client/icons.tsx
   client/term-pane.tsx → client/types.ts, client/clipboard.ts, client/icons.tsx, client/styles.ts
 
-两半经 WebSocket 通信，路由前缀 /api/dsh-remote-terminal，不直接 import。
+两半经 WebSocket 通信，路由前缀 /api/dsh-oh-my-terminal，不直接 import。
 @lydell/node-pty 是外部原生依赖，宿主半只在首次创建会话时 await import()。
 ```
 

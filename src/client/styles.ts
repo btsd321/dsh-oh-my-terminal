@@ -11,13 +11,13 @@
 // —— 路由与 DOM 标识常量 ——
 
 /** 宿主半路由前缀（与 index.ts 的 ROUTE_PREFIX 同源——独立插件直接用常量） */
-export const PREFIX = '/api/dsh-remote-terminal';
+export const PREFIX = '/api/dsh-oh-my-terminal';
 
 /** xterm.css <link> 标签的 id（幂等注入） */
-export const XTERM_CSS_TAG = 'dsh-remote-terminal-xterm-css';
+export const XTERM_CSS_TAG = 'dsh-oh-my-terminal-xterm-css';
 
 /** 面板样式 <style> 标签的 id（幂等注入） */
-export const STYLE_TAG = 'dsh-remote-terminal-styles';
+export const STYLE_TAG = 'dsh-oh-my-terminal-styles';
 
 // —— xterm.js 调优常量 ——
 

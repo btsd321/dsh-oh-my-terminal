@@ -17,10 +17,10 @@ import type { ShortcutCommand } from '@deepseek-ai/dsh-client-shortcuts/client';
 export const PKG_NAME = 'dsh-oh-my-terminal';
 
 /** 远端组件宿主半在远端 dsh 注册的同源路由前缀 */
-export const ROUTE_PREFIX = '/api/dsh-remote-terminal';
+export const ROUTE_PREFIX = '/api/dsh-oh-my-terminal';
 
 /** WebSocket 升级路径前缀（per-session: /ws/<id>） */
-export const WS_PREFIX = '/api/dsh-remote-terminal/ws';
+export const WS_PREFIX = '/api/dsh-oh-my-terminal/ws';
 
 /** 终端协议版本（浏览器半与本机构建器各持一份；不一致时远端面板降级禁用） */
 export const PROTOCOL_VERSION = 1;

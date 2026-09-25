@@ -38,10 +38,10 @@ const log = createLogger('terminal-client');
 // —— 常量 ——
 
 /** 宿主半路由前缀（与 index.ts 的 ROUTE_PREFIX 同源） */
-const PREFIX = '/api/dsh-remote-terminal';
+const PREFIX = '/api/dsh-oh-my-terminal';
 
 /** 面板高度在 localStorage 里的键名 */
-const HEIGHT_KEY = 'dsh-remote-terminal.height';
+const HEIGHT_KEY = 'dsh-oh-my-terminal.height';
 
 /** 面板最小高度（像素） */
 const MIN_HEIGHT = 120;
@@ -67,7 +67,7 @@ const DEFAULT_SHORTCUT_STR = 'ctrl+`';
  */
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(PREFIX + path, opts);
-  if (!res.ok) throw new Error('dsh-remote-terminal ' + res.status);
+  if (!res.ok) throw new Error('dsh-oh-my-terminal ' + res.status);
   return (await res.json()) as T;
 }
 
