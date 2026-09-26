@@ -480,6 +480,10 @@ export interface ConfigResult {
   shortcut: ShortcutSpec | null;
   /** 快捷键显示标签 */
   shortcutLabel: string;
+  /** 终端字体族（空串 = 内置默认字体栈，由 TermPane 解析回落） */
+  fontFamily: string;
+  /** 终端字号（像素）；undefined = 未下发，用内置默认值 */
+  fontSize: number | undefined;
   /** 终端种类列表 */
   terminalTypes: TerminalType[];
 }
@@ -504,6 +508,9 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
   const defaultShortcut = parseShortcut(DEFAULT_SHORTCUT_STR);
   const [shortcut, setShortcut] = useState<ShortcutSpec | null>(defaultShortcut);
   const [terminalTypes, setTerminalTypes] = useState<TerminalType[]>([]);
+  /* 终端字体族/字号：/config 下发；空串/未下发时 TermPane 用内置默认 */
+  const [fontFamily, setFontFamily] = useState('');
+  const [fontSize, setFontSize] = useState<number | undefined>(undefined);
   /* shortcuts 接入后的当前生效绑定标签；未接入时 null（走 shortcut.label） */
   const [catalogLabel, setCatalogLabel] = useState<string | null>(null);
   const shortcutLabel = catalogLabel ?? shortcut?.label ?? 'Ctrl+Shift+`';
@@ -519,7 +526,10 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
           if (parsed !== null) setShortcut(parsed);
           else log.warn('忽略无效的 toggleShortcut', cfg.toggleShortcut);
         }
-        // 2. 填充终端种类列表
+        // 2. 取字体族与字号（空串/缺省时 TermPane 回落内置默认）
+        if (typeof cfg.fontFamily === 'string') setFontFamily(cfg.fontFamily);
+        if (typeof cfg.fontSize === 'number' && Number.isFinite(cfg.fontSize) && cfg.fontSize > 0) setFontSize(cfg.fontSize);
+        // 3. 填充终端种类列表
         if (Array.isArray(cfg.terminalTypes)) {
           setTerminalTypes(cfg.terminalTypes);
         }
@@ -565,7 +575,7 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
     return () => window.removeEventListener('keydown', onKey);
   }, [shortcut, setOpen]);
 
-  return { shortcut, shortcutLabel, terminalTypes };
+  return { shortcut, shortcutLabel, fontFamily, fontSize, terminalTypes };
 }
 
 // —— Hook 5: useTerminalTabs（改造为接收 dispatch） ——

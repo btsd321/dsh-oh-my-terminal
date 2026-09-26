@@ -275,7 +275,7 @@ export interface RouteHandlerDeps {
   /** 持久化存储 */
   store: SessionStore;
   /** 运行时配置（快捷键 + shell 命令行） */
-  runtimeSettings: { toggleShortcut: string; shellCommand: string };
+  runtimeSettings: { toggleShortcut: string; shellCommand: string; fontFamily: string; fontSize: number };
   /** 可选的 DSH 工作区注册表 */
   workspaceRegistry: unknown;
   /** 创建新会话 */
@@ -360,6 +360,8 @@ export function createRouteHandler(
         json(res, 200, {
           toggleShortcut: runtimeSettings.toggleShortcut,
           shellCommand: runtimeSettings.shellCommand,
+          fontFamily: runtimeSettings.fontFamily,
+          fontSize: runtimeSettings.fontSize,
           terminalTypes: platform.builtinTerminalTypes,
           protocolVersion: PROTOCOL_VERSION,
         });

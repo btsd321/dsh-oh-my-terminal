@@ -83,6 +83,10 @@ export interface ConfigResponse {
   toggleShortcut?: string;
   /** 配置的 shell 命令 */
   shellCommand?: string;
+  /** 终端字体族（CSS font-family 串；空串或缺省时用内置默认字体栈） */
+  fontFamily?: string;
+  /** 终端字号（像素；缺省时用内置默认值） */
+  fontSize?: number;
   /** 可选的终端种类列表 */
   terminalTypes?: TerminalType[];
 }

@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type z from '@deepseek-ai/schemastery';
 import { Config } from '../../src/index.js';
-import { DEFAULT_TOGGLE_SHORTCUT } from '../../src/constants.js';
+import { DEFAULT_TOGGLE_SHORTCUT, DEFAULT_FONT_SIZE } from '../../src/constants.js';
 
 // Config 的值导出是 schemastery 实例；interface Config 与 const Config 同名
 // （值/类型空间分离），测试里以 unknown 收窄后再断言最小形状
@@ -25,10 +25,10 @@ function field(name: string): { meta: Record<string, unknown> } | undefined {
 }
 
 describe('Config schema 形状', () => {
-  it('是 object schema 且声明两个字段', () => {
+  it('是 object schema 且声明四个字段', () => {
     assert.equal((schema as unknown as { type?: string }).type, 'object');
     const dict = (schema as unknown as { dict?: Record<string, unknown> }).dict;
-    assert.deepEqual(Object.keys(dict ?? {}).sort(), ['shellCommand', 'toggleShortcut']);
+    assert.deepEqual(Object.keys(dict ?? {}).sort(), ['fontFamily', 'fontSize', 'shellCommand', 'toggleShortcut']);
   });
 
   it('toggleShortcut 带 volatile 标记（GUI 表单可见 + 免重启热更新）', () => {
@@ -43,19 +43,37 @@ describe('Config schema 形状', () => {
     assert.equal(node?.meta.volatile, true);
   });
 
-  it('两字段带默认值（空配置时回落），符合全字段给 default 的约束', () => {
-    assert.equal(field('toggleShortcut')?.meta.default, DEFAULT_TOGGLE_SHORTCUT);
-    assert.equal(field('shellCommand')?.meta.default, '');
+  it('fontFamily 带 volatile 标记', () => {
+    const node = field('fontFamily');
+    assert.notEqual(node, undefined);
+    assert.equal(node?.meta.volatile, true);
   });
 
-  it('两字段带 description（GUI 表单的字段说明）', () => {
+  it('fontSize 带 volatile 标记', () => {
+    const node = field('fontSize');
+    assert.notEqual(node, undefined);
+    assert.equal(node?.meta.volatile, true);
+  });
+
+  it('四字段带默认值（空配置时回落），符合全字段给 default 的约束', () => {
+    assert.equal(field('toggleShortcut')?.meta.default, DEFAULT_TOGGLE_SHORTCUT);
+    assert.equal(field('shellCommand')?.meta.default, '');
+    assert.equal(field('fontFamily')?.meta.default, '');
+    assert.equal(field('fontSize')?.meta.default, DEFAULT_FONT_SIZE);
+  });
+
+  it('四字段带 description（GUI 表单的字段说明）', () => {
     assert.equal(typeof field('toggleShortcut')?.meta.description, 'string');
     assert.equal(typeof field('shellCommand')?.meta.description, 'string');
+    assert.equal(typeof field('fontFamily')?.meta.description, 'string');
+    assert.equal(typeof field('fontSize')?.meta.description, 'string');
   });
 
   it('toJSON 可序列化（SettingsForms.describe 生成表单的输入）', () => {
     const json = JSON.stringify(schema.toJSON());
     assert.ok(json.includes('toggleShortcut'));
     assert.ok(json.includes('shellCommand'));
+    assert.ok(json.includes('fontFamily'));
+    assert.ok(json.includes('fontSize'));
   });
 });
