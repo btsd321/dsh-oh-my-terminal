@@ -49,6 +49,18 @@ export const LOG_FLUSH_MS = 250;
 export const DEFAULT_TOGGLE_SHORTCUT = 'ctrl+shift+`';
 
 /**
+ * 默认 xterm 字体栈：西文等宽在前、CJK 回退垫后。
+ *
+ * 有意不含 Nerd Font 专属字形依赖——用户把本机字体（如 Maple Mono NF CN）
+ * 经 Config.fontFamily 填在最前即可获得图标字形，这里只保证无配置时
+ * 中英文都不缺字。
+ */
+export const DEFAULT_FONT_FAMILY = "ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, Menlo, 'PingFang SC', 'Noto Sans Mono CJK SC', 'Microsoft YaHei', monospace";
+
+/** 默认 xterm 字号（像素）——TUI agent 输出密度与可读性的折中 */
+export const DEFAULT_FONT_SIZE = 12.5;
+
+/**
  * 在 DSH shortcuts 系统注册的"切换终端面板"命令 id。
  * DSH 0.1.7-rc.2 起宿主自带终端（terminal.new）占用 Ctrl+`，本插件改注册
  * 独立命令并让键位统一在 DSH 设置界面配置。
@@ -76,6 +88,10 @@ export const SHORTCUT_DEFAULTS: ShortcutCommand['defaults'] = {
 export const ENV_TOGGLE_SHORTCUT = 'DSH_PLUGIN_TERMINAL_TOGGLE_SHORTCUT';
 /** shell 命令环境变量名（ops 级覆盖，优先于 settings 文档） */
 export const ENV_SHELL_COMMAND = 'DSH_PLUGIN_TERMINAL_SHELL_COMMAND';
+/** 字体族环境变量名（ops 级覆盖，优先于 settings 文档） */
+export const ENV_FONT_FAMILY = 'DSH_PLUGIN_TERMINAL_FONT_FAMILY';
+/** 字号环境变量名（ops 级覆盖，优先于 settings 文档） */
+export const ENV_FONT_SIZE = 'DSH_PLUGIN_TERMINAL_FONT_SIZE';
 /** 持久化目录环境变量覆盖（测试用） */
 export const ENV_DATA_DIR = 'DSH_PLUGIN_TERMINAL_DATA';
 

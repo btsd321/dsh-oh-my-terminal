@@ -51,6 +51,7 @@ import {
   PKG_NAME, ROUTE_PREFIX, WS_PREFIX, SCROLLBACK_CHARS,
   DEFAULT_COLS, DEFAULT_ROWS,
   DEFAULT_TOGGLE_SHORTCUT, ENV_TOGGLE_SHORTCUT, ENV_SHELL_COMMAND, ENV_DATA_DIR,
+  DEFAULT_FONT_SIZE, ENV_FONT_FAMILY, ENV_FONT_SIZE,
 } from './constants.js';
 import { platform } from './platform.js';
 import { SessionStore } from './persistence.js';
@@ -134,6 +135,10 @@ export interface Config {
   toggleShortcut: Volatile<string | undefined>;
   /** 新终端的 shell 命令行；空 = 自动探测平台 shell */
   shellCommand: Volatile<string | undefined>;
+  /** 终端字体族（CSS font-family 串）；空 = 内置默认字体栈 */
+  fontFamily: Volatile<string | undefined>;
+  /** 终端字号（像素） */
+  fontSize: Volatile<number | undefined>;
 }
 
 /**
@@ -151,6 +156,14 @@ export const Config = z.object({
   shellCommand: z.string()
     .description('新建终端使用的 shell 命令行，如 bash -l。留空自动探测平台 shell（$SHELL || /bin/bash）。仅应用于新建会话及其重启；已有会话保留其启动命令')
     .default('')
+    .volatile(),
+  fontFamily: z.string()
+    .description('终端字体族（CSS font-family 串），如 ‘Maple Mono NF CN’, Consolas, monospace。留空使用内置默认字体栈（含 CJK 回退）；Nerd Font / Powerline 用户把本机字体填在最前即可正常显示图标字形。仅应用于新建会话及其重启')
+    .default('')
+    .volatile(),
+  fontSize: z.number()
+    .description('终端字号（像素）。默认 12.5。仅应用于新建会话及其重启')
+    .default(DEFAULT_FONT_SIZE)
     .volatile(),
 });
 
@@ -198,6 +211,23 @@ export function apply(ctx: Context, config: Config): void {
       if (env !== undefined) return env;
       const value = config.shellCommand.get();
       return typeof value === 'string' ? value : '';
+    },
+    /** 终端字体族（空串 = 前端用内置默认字体栈） */
+    get fontFamily(): string {
+      const env = process.env[ENV_FONT_FAMILY];
+      if (env !== undefined) return env;
+      const value = config.fontFamily.get();
+      return typeof value === 'string' ? value : '';
+    },
+    /** 终端字号（像素）——env/配置都要求正有限数，非法值回落默认 */
+    get fontSize(): number {
+      const env = process.env[ENV_FONT_SIZE];
+      if (env !== undefined) {
+        const parsed = Number.parseFloat(env);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+      const value = config.fontSize.get();
+      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : DEFAULT_FONT_SIZE;
     },
   };
 

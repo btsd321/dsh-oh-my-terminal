@@ -17,7 +17,7 @@ import type { TerminalInstance } from './types.js';
 import { createClipboardHandlers } from './clipboard.js';
 import { Refresh14 } from './icons.js';
 import {
-  PREFIX, TERM_FONT_SIZE, TERM_LINE_HEIGHT, TERM_SCROLLBACK, TERM_THEME,
+  PREFIX, TERM_FONT_FAMILY, TERM_FONT_SIZE, TERM_LINE_HEIGHT, TERM_SCROLLBACK, TERM_THEME,
 } from './styles.js';
 
 // —— TermPane 组件 ——
@@ -28,6 +28,10 @@ export interface TermPaneProps {
   instance: TerminalInstance;
   /** 是否为当前活跃实例 */
   active: boolean;
+  /** 终端字体族（空串 = 内置默认字体栈）；经 Config 下发，xterm 为 init-only 故只在构造时取值 */
+  fontFamily: string;
+  /** 终端字号（像素）；undefined = 用内置默认值 */
+  fontSize: number | undefined;
   /** 会话退出回调（标记实例为 exited） */
   onExit: (id: string) => void;
 }
@@ -43,7 +47,7 @@ export interface TermPaneProps {
  * @returns 终端容器 div
  */
 export function TermPane(props: TermPaneProps): ReactElement {
-  const { instance, active, onExit } = props;
+  const { instance, active, onExit, fontFamily, fontSize } = props;
   const { useEffect, useRef } = React;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -70,8 +74,10 @@ export function TermPane(props: TermPaneProps): ReactElement {
      */
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Mono', Consolas, Menlo, 'PingFang SC', 'Noto Sans Mono CJK SC', 'Microsoft YaHei', monospace",
-      fontSize: TERM_FONT_SIZE,
+      /* 字体族/字号经 Config（或 env）下发，空串/缺省回落内置默认——字体栈
+       * 最前放本机 Nerd Font（如 Maple Mono NF CN）即可正确显示图标字形 */
+      fontFamily: fontFamily !== '' ? fontFamily : TERM_FONT_FAMILY,
+      fontSize: fontSize ?? TERM_FONT_SIZE,
       lineHeight: TERM_LINE_HEIGHT,
       scrollback: TERM_SCROLLBACK,
       drawBoldTextInBrightColors: false,

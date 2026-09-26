@@ -232,8 +232,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     workspaceCwd, sessionId,
   });
 
-  /* —— 统一配置拉取（/config：快捷键 + 终端种类，单次请求） + 全局 keydown 监听 —— */
-  const { shortcutLabel, terminalTypes } = useConfig(setOpen);
+  /* —— 统一配置拉取（/config：快捷键 + 字体 + 终端种类，单次请求） + 全局 keydown 监听 —— */
+  const { shortcutLabel, fontFamily, fontSize, terminalTypes } = useConfig(setOpen);
 
   /** 首次打开已处理标记（关闭最后一个终端不自动新建，只有全新打开才建） */
   const openHandled = useRef(false);
@@ -361,6 +361,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
                   key: inst.id,
                   instance: inst,
                   active: inst.id === activeInstanceId,
+                  fontFamily,
+                  fontSize,
                   onExit,
                 });
               }
@@ -380,6 +382,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
                       React.createElement(TermPane, {
                         instance: inst,
                         active: inst.id === activeInstanceId,
+                        fontFamily,
+                        fontSize,
                         onExit,
                       }),
                     ),

@@ -8,6 +8,10 @@
  *              保证 SSR / Node 环境安全（typeof document 守卫）。
  */
 
+// 默认字体栈与默认字号与宿主半共享同一常量（constants.ts）——两半不允许互相
+// import，但共享层常量可被双方引用，避免同一数值两处漂移
+import { DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE } from '../constants.js';
+
 // —— 路由与 DOM 标识常量 ——
 
 /** 宿主半路由前缀（与 index.ts 的 ROUTE_PREFIX 同源——独立插件直接用常量） */
@@ -21,8 +25,11 @@ export const STYLE_TAG = 'dsh-oh-my-terminal-styles';
 
 // —— xterm.js 调优常量 ——
 
-/** xterm 字号（像素）——TUI agent 输出密度与可读性的折中 */
-export const TERM_FONT_SIZE = 12.5;
+/** 默认 xterm 字体栈——Config.fontFamily 为空时的回落值（Nerd Font 图标字形需用户配置本机字体） */
+export const TERM_FONT_FAMILY = DEFAULT_FONT_FAMILY;
+
+/** 默认 xterm 字号（像素）——TUI agent 输出密度与可读性的折中；Config.fontSize 缺省时的回落值 */
+export const TERM_FONT_SIZE = DEFAULT_FONT_SIZE;
 
 /** xterm 行高倍数——紧凑但不挤行 */
 export const TERM_LINE_HEIGHT = 1.25;
