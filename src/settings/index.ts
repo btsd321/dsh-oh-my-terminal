@@ -37,14 +37,18 @@ export { createSettingsBridgeRoutes } from './bridge.js';
  * 逐一调用清理。
  *
  * @param ctx - cordis 上下文（插件主入口的 apply 参数）
+ * @param schema - 插件 Config 的 schemastery schema，用于注册 settings 命名空间。
+ *   auto=false 下服务不会自动注册，缺了这一步 describe/mutate 恒报「命名空间
+ *   不存在」，前端配置卡片静默不渲染（无报错、无入口）
  * @param runtimeProfiles - 运行时终端配置表（探测+合并后的完整数组），传给 bridge
  *   供 describe 端点覆盖持久化的 terminalProfiles 值
  */
 export function registerSettingsIntegration(
   ctx: Context,
+  schema: unknown,
   runtimeProfiles?: unknown[],
 ): void {
-  // 1. 配置 settings 服务为非自动模式——软探测，服务不存在时不激活
+  // 1. 注册 settings 命名空间 + 关闭自动模式——软探测，服务不存在时不激活
   ctx.inject(['settings'], (sctx) => {
     // settings.configure({ auto: false }, fiber) 关闭自动模式：
     // - auto=true：settings 服务自动从 profile patch 读配置并写回插件 Config
@@ -53,6 +57,23 @@ export function registerSettingsIntegration(
     //
     // fiber 参数绑定配置生命周期到当前 effect——effect 销毁时配置自动清理
     sctx.effect(() => sctx.settings.configure({ auto: false }, ctx.fiber));
+
+    // auto=false 同时关闭了命名空间的自动注册——必须在此显式 register，否则
+    // describe/mutate 恒报「命名空间不存在」，前端配置卡片静默不渲染。重复注册
+    // （热重载、重复 apply）抛 "already registered"，作为幂等情形吞掉；其余注册
+    // 失败如实上抛，不把失败包装成成功。
+    /** settings 服务注册面的最小鸭子类型（对齐官方 SettingsProvider.register） */
+    interface SettingsRegistrar {
+      /** 注册命名空间 schema；重复注册抛 "already registered" */
+      register(ns: string, schema: unknown): unknown;
+    }
+    const registrar = sctx.settings as unknown as SettingsRegistrar;
+    try {
+      registrar.register(SETTINGS_NS, schema);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('already registered')) throw error;
+    }
   });
 
   // 2. 注册 settings bridge 路由（describe + mutate）——软探测，服务不存在时不激活

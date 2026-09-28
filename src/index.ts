@@ -521,9 +521,10 @@ export function apply(ctx: Context, config: Config): void {
   });
 
   // —— settings 集成（可选，软探测）——
-  // 传入 cachedProfiles：让 describe 端点返回运行时合并探测结果后的完整配置表，
-  // 而非配置系统持久化值（可能是空串），设置页面才能看到自动探测到的终端项
-  registerSettingsIntegration(ctx, cachedProfiles);
+  // 传入 Config schema：auto=false 下命名空间需显式注册（见 settings/index.ts），
+  // 缺注册则设置卡片静默不渲染；cachedProfiles 让 describe 端点返回运行时合并
+  // 探测结果后的完整配置表，而非配置系统持久化值（可能是空串）
+  registerSettingsIntegration(ctx, Config, cachedProfiles);
 
   // —— 插件销毁清理 ——
   ctx.effect(() => {
