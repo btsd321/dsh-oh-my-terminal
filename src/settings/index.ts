@@ -43,38 +43,74 @@ export { createSettingsBridgeRoutes } from './bridge.js';
  * @param runtimeProfiles - 运行时终端配置表（探测+合并后的完整数组），传给 bridge
  *   供 describe 端点覆盖持久化的 terminalProfiles 值
  */
-export function registerSettingsIntegration(
-  ctx: Context,
-  schema: unknown,
-  runtimeProfiles?: unknown[],
-): void {
-  // 1. 注册 settings 命名空间 + 关闭自动模式——软探测，服务不存在时不激活
+/**
+ * 注册 settings 命名空间（幂等，须先于任何 settings 读写）。
+ *
+ * 命名空间注册是 settings 服务注册表的唯一入口；首次配置落盘（prepareProfiles
+ * 的首跑写回）等读写都依赖它——必须在 apply 早期调用本函数，晚于首次写回会
+ * 报「namespace is not registered」（时序竞态）。重复注册（热重载、重复 apply、
+ * 以及 registerSettingsIntegration 的兜底调用）抛 "already registered"，作为幂等
+ * 情形吞掉；其余注册失败（如存储段损坏）如实上抛，不把失败包装成成功。
+ *
+ * @param ctx - cordis 上下文
+ * @param schema - 插件 Config 的 schemastery schema
+ */
+export function registerSettingsNamespace(ctx: Context, schema: unknown): void {
+  // 注册命名空间 +（可选）关闭自动模式——软探测，服务不存在时不激活
   ctx.inject(['settings'], (sctx) => {
-    // settings.configure({ auto: false }, fiber) 关闭自动模式：
+    /** settings 服务能力面（不同宿主版本暴露面不同，逐能力探测） */
+    interface SettingsFacade {
+      /** 新宿主可选能力：关闭自动写回；旧宿主（0.1.5 系）无此方法 */
+      configure?: (options: { auto: boolean }, fiber?: unknown) => void;
+      /**
+       * 注册命名空间 schema；重复注册抛 "already registered"。
+       * 可选——宿主 SettingsForms 靠 cordis loader entries 发现命名空间，
+       * 不一定提供此方法（如 0.1.7-rc.1 的 SettingsForms 无 register）。
+       */
+      register?: (ns: string, schema: unknown) => unknown;
+    }
+    const facade = sctx.settings as unknown as SettingsFacade;
+
+    // configure 仅在宿主提供时调用——0.1.5 系宿主的 settings 服务没有该方法，
+    // 直接调用会 TypeError 并中断本回调的后续初始化（包括下面的命名空间注册）：
     // - auto=true：settings 服务自动从 profile patch 读配置并写回插件 Config
     // - auto=false：插件自行管理配置（本插件的 Config 字段都是 volatile 引用，
     //   由 cordis loader 注入，无需 settings 服务二次写入）
     //
     // fiber 参数绑定配置生命周期到当前 effect——effect 销毁时配置自动清理
-    sctx.effect(() => sctx.settings.configure({ auto: false }, ctx.fiber));
-
-    // auto=false 同时关闭了命名空间的自动注册——必须在此显式 register，否则
-    // describe/mutate 恒报「命名空间不存在」，前端配置卡片静默不渲染。重复注册
-    // （热重载、重复 apply）抛 "already registered"，作为幂等情形吞掉；其余注册
-    // 失败如实上抛，不把失败包装成成功。
-    /** settings 服务注册面的最小鸭子类型（对齐官方 SettingsProvider.register） */
-    interface SettingsRegistrar {
-      /** 注册命名空间 schema；重复注册抛 "already registered" */
-      register(ns: string, schema: unknown): unknown;
+    if (typeof facade.configure === 'function') {
+      const configure = facade.configure;
+      sctx.effect(() => {
+        const cleanup = configure.call(facade, { auto: false }, ctx.fiber);
+        // effect 要求回调返回清理函数；configure 的返回值即其注册的清理效应
+        return typeof cleanup === 'function' ? cleanup : (): void => undefined;
+      });
     }
-    const registrar = sctx.settings as unknown as SettingsRegistrar;
-    try {
-      registrar.register(SETTINGS_NS, schema);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes('already registered')) throw error;
+
+    // register 同样逐能力探测——宿主 SettingsForms 靠 cordis loader entries
+    // （configEditor.configuration()）发现命名空间，不一定提供 register 方法
+    // （0.1.7-rc.1 的 SettingsForms 无此方法）。方法不存在时跳过，不抛 TypeError；
+    // 方法存在时重复注册（热重载、重复 apply）抛 "already registered"，作为幂等
+    // 情形吞掉；其余注册失败（如存储段损坏）如实上抛，不把失败包装成成功。
+    if (typeof facade.register === 'function') {
+      try {
+        facade.register(SETTINGS_NS, schema);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes('already registered')) throw error;
+      }
     }
   });
+}
+
+export function registerSettingsIntegration(
+  ctx: Context,
+  schema: unknown,
+  runtimeProfiles?: unknown[],
+): void {
+  // 0. 命名空间注册兜底（幂等）——正常由调用方在 apply 早期先行调用
+  //    registerSettingsNamespace，此处重复注册被吞
+  registerSettingsNamespace(ctx, schema);
 
   // 2. 注册 settings bridge 路由（describe + mutate）——软探测，服务不存在时不激活
   ctx.inject(['webServer', 'settings'], (sctx) => {

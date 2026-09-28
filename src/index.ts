@@ -61,7 +61,7 @@ import { createWsHandlers } from './ws-handler.js';
 import { createRouteHandler } from './routes.js';
 import type { CreateSessionOptions } from './routes.js';
 import { makeId, getSessionCounter, resolveSpawn, resolveSessionCwd } from './routes.js';
-import { registerSettingsIntegration } from './settings/index.js';
+import { registerSettingsIntegration, registerSettingsNamespace, SETTINGS_NS } from './settings/index.js';
 import type { TerminalProfile } from './terminal/index.js';
 import { detectTerminalProfiles, mergeProfiles } from './terminal/index.js';
 
@@ -317,7 +317,10 @@ export function apply(ctx: Context, config: Config): void {
       ctx.inject(['settings'], (sctx) => {
         const settings = sctx.settings as { update?: (ns: string, patch: object) => Promise<void> };
         if (typeof settings.update !== 'function') return;
-        void settings.update(PKG_NAME.replace(/^dsh-/, ''), { terminalProfiles: payload })
+        // 命名空间必须与 settings 集成注册的 SETTINGS_NS 逐字一致——
+        // 此前误用包名派生串（PKG_NAME 去前缀 = 'oh-my-terminal'），与注册的
+        // 'terminal-panel' 对不上，首次落盘恒报「namespace not registered」
+        void settings.update(SETTINGS_NS, { terminalProfiles: payload })
           .then(() => { log.info(`终端配置表已初始化：探测到 ${merged.length} 个终端`); })
           .catch((error: unknown) => {
             const msg = error instanceof Error ? error.message : String(error);
@@ -329,6 +332,10 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /** 启动时求值的终端配置表（探测 + 合并结果） */
+  // 命名空间注册必须先于 prepareProfiles 的首跑写回（时序竞态：写回早于注册会
+  // 报「namespace is not registered」）——故在此提前注册，settings/index.ts
+  // 内部保留幂等兜底
+  registerSettingsNamespace(ctx, Config);
   const cachedProfiles: TerminalProfile[] = prepareProfiles();
 
   /** id -> 会话记录 */
