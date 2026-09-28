@@ -103,8 +103,9 @@ src/
 │   ├── styles.ts         # CSS constants + Campbell dark theme
 │   ├── icons.tsx         # SVG icon components
 │   ├── clipboard.ts      # Clipboard utility functions
-│   ├── settings/         # Settings UI (types, store, card, profile-table, API, styles)
-│   └── terminal/         # Terminal tab state management (use-tabs, reducer, geometry)
+│   ├── shortcut-bridge.ts # Shortcuts service integration (command registration + toggle bridge)
+│   ├── settings/         # Settings UI (types / store / card / profile-table / api / styles)
+│   └── terminal/         # Terminal tab state (use-tabs / reducer / use-terminal-state / geometry)
 ├── persistence.ts        # Session persistence (log storage, metadata, startup restore)
 ├── platform.ts           # Platform adapter (POSIX / Windows + shell detection)
 ├── terminal/             # Terminal kinds, detection, resolution, profile store

@@ -101,8 +101,9 @@ src/
 │   ├── styles.ts         # CSS 常量 + Campbell 暗色主题
 │   ├── icons.tsx         # SVG 图标组件
 │   ├── clipboard.ts      # 剪贴板工具函数
+│   ├── shortcut-bridge.ts # shortcuts 服务接入桥（命令注册 + 面板切换回调）
 │   ├── settings/         # 设置界面（types / store / card / profile-table / api / styles）
-│   └── terminal/         # 终端标签页状态管理（use-tabs / reducer / geometry）
+│   └── terminal/         # 终端标签页状态（use-tabs / reducer / use-terminal-state / geometry）
 ├── persistence.ts        # 会话持久化层（日志落盘 / 元数据 / 启动恢复）
 ├── platform.ts           # 平台适配层（POSIX / Windows + shell 探测）
 ├── terminal/             # 终端种类、探测、解析、配置表校验
