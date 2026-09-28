@@ -1,6 +1,6 @@
 # dsh-oh-my-terminal
 
-[![version](https://img.shields.io/badge/version-0.2.1-blue)](package.json)
+[![version](https://img.shields.io/badge/version-0.2.4-blue)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.0.0-brightgreen)](package.json)
 
@@ -16,7 +16,8 @@ A bottom terminal panel plugin for DSH Web GUI. Powered by `@lydell/node-pty`, i
 - **Configurable shortcut**: toggle the panel with a keyboard shortcut; on DSH 0.1.7-rc.2+ the plugin integrates with the host shortcut system and the panel label updates to reflect the current binding
 - **Resizable panel**: drag the top edge of the panel to adjust its height
 - **Cross-platform**: Windows ConPTY and POSIX openpty are selected automatically by `@lydell/node-pty`; pre-compiled binaries ship with the package, nothing to compile
-- **Configurable shell**: set a custom shell command and arguments
+- **Profile-driven terminals**: a configurable terminal profile table (type / name / path) drives new-terminal creation; profiles are auto-detected at startup and can be added, renamed, and edited in the settings UI
+- **Configurable fonts**: font family, size, and line height are adjustable and hot-reload on open terminals
 
 ## Installation
 
@@ -30,8 +31,22 @@ dsh plugin --profile web add github:btsd321/dsh-oh-my-terminal
 
 | Option | Description | Default |
 |---|---|---|
-| `toggleShortcut` | Shortcut to toggle the terminal panel (legacy host only; see below) | `` Ctrl+` `` |
-| `shellCommand` | Shell command for new terminals | System default (bash / PowerShell) |
+| `toggleShortcut` | Shortcut to toggle the terminal panel (legacy host only; see below) | `` Ctrl+Shift+` `` |
+| `fontFamily` | Terminal font family (CSS `font-family` string); empty = built-in default stack with CJK fallback | `''` |
+| `fontSize` | Terminal font size in pixels | `12.5` |
+| `lineHeight` | Terminal line height multiplier | `1.25` |
+| `terminalProfiles` | Terminal profile table (JSON array); empty = use auto-detected $PATH terminals | `''` |
+
+### Terminal profiles
+
+The terminal profile table is a JSON array of `{ id, type, name, path, origin }` entries:
+
+- **type**: determines spawn semantics — `pwsh` / `powershell` / `cmd` / `bash` / `zsh` / `fish` / `gitbash` / `nushell` / `custom`
+- **name**: display name shown in the dropdown menu (user-editable)
+- **path**: executable path; empty = resolve by `type` in `$PATH`
+- **origin**: `auto` (startup-detected) or `user` (manually added)
+
+Auto-detected profiles (`origin: auto`) cannot be deleted and their path is read-only, but the name is always editable. The profile table is editable in the settings UI with inline editing, add-row, and delete support.
 
 ## DSH 0.1.7-rc.2 shortcut changes
 
@@ -75,25 +90,29 @@ The host side lazy-loads the package (`await import()` on first session creation
 
 ```
 src/
-├── index.ts          # Host entry (Cordis plugin + settings + session lifecycle)
-├── routes.ts         # HTTP route handlers
-├── ws-handler.ts     # WebSocket handler (pty data forwarding)
-├── client.tsx        # Browser entry (React components + plugin registration)
+├── index.ts              # Host entry (Cordis plugin + settings + session lifecycle)
+├── routes.ts             # HTTP route handlers
+├── ws-handler.ts         # WebSocket handler (pty data forwarding)
+├── client.tsx            # Browser entry (React components + plugin registration)
 ├── client/
-│   ├── types.ts      # Shared types
-│   ├── hooks.ts      # useReducer state management + custom hooks
-│   ├── term-pane.tsx # xterm.js terminal pane component
-│   ├── dropdown.tsx  # Dropdown menu next to the + button
-│   ├── side-list.tsx # Right-side terminal list panel
-│   ├── styles.ts     # CSS constants + Campbell dark theme
-│   ├── icons.tsx     # SVG icon components
-│   └── clipboard.ts  # Clipboard utility functions
-├── persistence.ts    # Session persistence (log storage, metadata, startup restore)
-├── platform.ts       # Platform adapter (POSIX / Windows + shell detection)
-├── constants.ts      # Protocol, size, shortcut, and env var constants
-├── server-command.ts # Command-line parsing utilities
-├── shortcut.ts       # Shortcut parsing utilities
-└── logger.ts         # Structured logger
+│   ├── types.ts          # Shared types
+│   ├── hooks.ts          # useReducer state management + custom hooks
+│   ├── term-pane.tsx     # xterm.js terminal pane component
+│   ├── dropdown.tsx      # Dropdown menu next to the + button
+│   ├── side-list.tsx     # Right-side terminal list panel
+│   ├── styles.ts         # CSS constants + Campbell dark theme
+│   ├── icons.tsx         # SVG icon components
+│   ├── clipboard.ts      # Clipboard utility functions
+│   ├── settings/         # Settings UI (types, store, card, profile-table, API, styles)
+│   └── terminal/         # Terminal tab state management (use-tabs, reducer, geometry)
+├── persistence.ts        # Session persistence (log storage, metadata, startup restore)
+├── platform.ts           # Platform adapter (POSIX / Windows + shell detection)
+├── terminal/             # Terminal kinds, detection, resolution, profile store
+├── settings/             # Settings bridge (namespace, bridge routes, patch ops)
+├── constants.ts          # Protocol, size, shortcut, and env var constants
+├── server-command.ts     # Command-line parsing utilities
+├── shortcut.ts           # Shortcut parsing utilities
+└── logger.ts             # Structured logger
 ```
 
 The host side and browser side communicate over WebSocket at `/api/dsh-oh-my-terminal` and do not import each other directly.

@@ -1,6 +1,6 @@
 # dsh-oh-my-terminal
 
-[![version](https://img.shields.io/badge/version-0.2.1-blue)](package.json)
+[![version](https://img.shields.io/badge/version-0.2.4-blue)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.0.0-brightgreen)](package.json)
 
@@ -14,7 +14,8 @@ DSH Web GUI 的底部终端面板插件，基于 `@lydell/node-pty` 提供多终
 - **快捷键开关**：可配置快捷键呼出/收起面板；DSH 0.1.7-rc.2+ 接入宿主统一快捷键系统，在设置界面改键后标签跟随更新
 - **拖拽调高**：拖拽面板上边缘调整高度
 - **跨平台**：Windows ConPTY / POSIX openpty，由 `@lydell/node-pty` 自动选择，二进制随 tarball 分发，安装即用
-- **可配置 shell**：自定义 shell 命令与启动参数
+- **配置表驱动终端**：终端配置表（type / name / path）驱动新建终端；启动时自动探测 $PATH 中的终端，可在设置界面新增、改名、编辑路径
+- **字体可配置**：字体族、字号、行高可配置，配置变更对已打开终端即时生效
 
 ## 安装
 
@@ -28,8 +29,22 @@ dsh plugin --profile web add github:btsd321/dsh-oh-my-terminal
 
 | 配置项 | 说明 | 默认值 |
 |---|---|---|
-| `toggleShortcut` | 呼出/收起终端面板的快捷键（仅旧宿主生效，见下方适配说明） | `` Ctrl+` `` |
-| `shellCommand` | 终端使用的 shell 命令 | 系统默认（bash / PowerShell） |
+| `toggleShortcut` | 呼出/收起终端面板的快捷键（仅旧宿主生效，见下方适配说明） | `` Ctrl+Shift+` `` |
+| `fontFamily` | 终端字体族（CSS `font-family` 串）；留空使用内置默认字体栈（含 CJK 回退） | `''` |
+| `fontSize` | 终端字号（像素） | `12.5` |
+| `lineHeight` | 终端行高倍数 | `1.25` |
+| `terminalProfiles` | 终端配置表（JSON 数组）；留空 = 用启动时探测到的 $PATH 终端 | `''` |
+
+### 终端配置表
+
+终端配置表是 `{ id, type, name, path, origin }` 条目的 JSON 数组：
+
+- **type**：决定 spawn 语义 — `pwsh` / `powershell` / `cmd` / `bash` / `zsh` / `fish` / `gitbash` / `nushell` / `custom`
+- **name**：下拉菜单显示名（用户可改）
+- **path**：可执行文件路径；留空 = 按 type 在 `$PATH` 中解析
+- **origin**：`auto`（启动探测）/ `user`（手动新增）
+
+自动探测项（`origin: auto`）不可删除、路径不可改，但名称始终可编辑。配置表可在设置界面内 inline 编辑、新增行、删除。
 
 ## DSH 0.1.7-rc.2 快捷键适配说明
 
@@ -73,25 +88,29 @@ pnpm exec tsx --test tests/unit/*.test.ts
 
 ```
 src/
-├── index.ts          # 宿主半入口（Cordis 插件 + settings + 会话生命周期）
-├── routes.ts         # HTTP 路由处理器
-├── ws-handler.ts     # WebSocket 处理器（pty 数据转发）
-├── client.tsx        # 浏览器半入口（React 组件 + 插件注册）
+├── index.ts              # 宿主半入口（Cordis 插件 + settings + 会话生命周期）
+├── routes.ts             # HTTP 路由处理器
+├── ws-handler.ts         # WebSocket 处理器（pty 数据转发）
+├── client.tsx            # 浏览器半入口（React 组件 + 插件注册）
 ├── client/
-│   ├── types.ts      # 共享类型
-│   ├── hooks.ts      # useReducer 状态管理 + 自定义 Hooks
-│   ├── term-pane.tsx # xterm.js 终端面板组件
-│   ├── dropdown.tsx  # +号旁下拉菜单
-│   ├── side-list.tsx # 右侧终端列表
-│   ├── styles.ts     # CSS 常量 + Campbell 暗色主题
-│   ├── icons.tsx     # SVG 图标组件
-│   └── clipboard.ts  # 剪贴板工具函数
-├── persistence.ts    # 会话持久化层（日志落盘 / 元数据 / 启动恢复）
-├── platform.ts       # 平台适配层（POSIX / Windows + shell 探测）
-├── constants.ts      # 协议 / 尺寸 / 快捷键 / 环境变量常量
-├── server-command.ts # 命令行解析工具
-├── shortcut.ts       # 快捷键解析工具
-└── logger.ts         # 统一日志工具
+│   ├── types.ts          # 共享类型
+│   ├── hooks.ts          # useReducer 状态管理 + 自定义 Hooks
+│   ├── term-pane.tsx     # xterm.js 终端面板组件
+│   ├── dropdown.tsx      # +号旁下拉菜单
+│   ├── side-list.tsx     # 右侧终端列表
+│   ├── styles.ts         # CSS 常量 + Campbell 暗色主题
+│   ├── icons.tsx         # SVG 图标组件
+│   ├── clipboard.ts      # 剪贴板工具函数
+│   ├── settings/         # 设置界面（types / store / card / profile-table / api / styles）
+│   └── terminal/         # 终端标签页状态管理（use-tabs / reducer / geometry）
+├── persistence.ts        # 会话持久化层（日志落盘 / 元数据 / 启动恢复）
+├── platform.ts           # 平台适配层（POSIX / Windows + shell 探测）
+├── terminal/             # 终端种类、探测、解析、配置表校验
+├── settings/             # Settings 桥接层（命名空间 / 路由 / patch 操作）
+├── constants.ts          # 协议 / 尺寸 / 快捷键 / 环境变量常量
+├── server-command.ts     # 命令行解析工具
+├── shortcut.ts           # 快捷键解析工具
+└── logger.ts             # 统一日志工具
 ```
 
 宿主半与浏览器半经 WebSocket 通信，路由前缀 `/api/dsh-oh-my-terminal`，不直接 import。
