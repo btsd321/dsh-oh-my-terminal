@@ -1,6 +1,6 @@
 {
   "name": "dsh-oh-my-terminal",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "DSH Web GUI 底部终端面板插件——node-pty 驱动的多标签交互式终端（Windows ConPTY / POSIX openpty）",
   "type": "module",
   "license": "Apache-2.0",
@@ -35,12 +35,11 @@
     "@deepseek-ai/schemastery": "^3.18.0"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-brand": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-client-shortcuts": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-client-store": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-host-webserver": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-settings": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-shortcuts": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.1",
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "@types/ws": "^8.5.0",
