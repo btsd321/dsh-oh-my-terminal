@@ -13,7 +13,7 @@ A bottom terminal panel plugin for DSH Web GUI. Powered by `@lydell/node-pty`, i
 - **Multiple terminal sessions**: manage several sessions simultaneously; a side list replaces the traditional horizontal tab bar, with right-click rename support
 - **Split terminals**: horizontal splits within the same group; a VSCode-style dropdown next to the `+` button (new / split / new by kind)
 - **Session persistence**: sessions survive panel close/reopen and are automatically restored on startup
-- **Configurable shortcut**: toggle the panel with a keyboard shortcut; on DSH 0.1.7-rc.2+ the plugin integrates with the host shortcut system and the panel label updates to reflect the current binding
+- **Configurable shortcut**: toggle the panel with a keyboard shortcut; integrates with the host shortcut system and the panel label updates to reflect the current binding
 - **Resizable panel**: drag the top edge of the panel to adjust its height
 - **Cross-platform**: Windows ConPTY and POSIX openpty are selected automatically by `@lydell/node-pty`; pre-compiled binaries ship with the package, nothing to compile
 - **Profile-driven terminals**: a configurable terminal profile table (type / name / path) drives new-terminal creation; profiles are auto-detected at startup and can be added, renamed, and edited in the settings UI
@@ -47,14 +47,6 @@ The terminal profile table is a JSON array of `{ id, type, name, path, origin }`
 - **origin**: `auto` (startup-detected) or `user` (manually added)
 
 Auto-detected profiles (`origin: auto`) cannot be deleted and their path is read-only, but the name is always editable. The profile table is editable in the settings UI with inline editing, add-row, and delete support.
-
-## DSH 0.1.7-rc.2 shortcut changes
-
-DSH 0.1.7-rc.2 introduced a host-level shortcut system. Its built-in terminal (`` Ctrl+` `` via `terminal.new`) conflicts with the previous default. To avoid double-triggering, this plugin changed its behavior starting with the rc.2-compatible release:
-
-- **Integrated with shortcuts system**: the plugin registers the `terminal-panel.toggle` command with a default binding of `` Ctrl+Shift+` `` (no default on `web:linux`; bind it manually in DSH settings). Change the key in DSH Settings - Keyboard Shortcuts; the panel label updates automatically
-- **Legacy host (0.1.7-rc.1 and earlier)**: falls back to a bare `` Ctrl+` `` listener; the `toggleShortcut` setting still applies
-- **Migration note**: after upgrading the host, `` Ctrl+` `` opens the built-in terminal (side panel). Use `` Ctrl+Shift+` `` for this plugin's panel. To reclaim `` Ctrl+` `` for this plugin, first remove the built-in terminal's binding in DSH keyboard settings
 
 ## Development
 
