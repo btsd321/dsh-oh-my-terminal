@@ -266,3 +266,23 @@ export function mergeProfiles(
 
   return result;
 }
+
+/**
+ * 配置表持久层落定：合并探测结果，并决定是否需要首跑落盘。
+ *
+ * 落盘只在持久层读回为空且探测有结果时发生（首跑安装）。读回非空说明持久层
+ * 已有配置表，用户改过的 name、手动新增的项都存在里面，任何写回都会覆盖它们，
+ * 因此一律不写——这也是"值跨重启保留"的唯一保障。
+ *
+ * @param saved - 持久层读回的配置表（读不到按空表传入）
+ * @param detected - 启动时探测到的配置表
+ * @returns merged 合并后的配置表；persistPayload 首跑落盘的 JSON 串，无需落盘时为 null
+ */
+export function settleProfileTable(
+  saved: TerminalProfile[],
+  detected: TerminalProfile[],
+): { merged: TerminalProfile[]; persistPayload: string | null } {
+  const merged = mergeProfiles(saved, detected);
+  const persistPayload = saved.length === 0 && merged.length > 0 ? JSON.stringify(merged) : null;
+  return { merged, persistPayload };
+}
