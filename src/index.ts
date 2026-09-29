@@ -61,9 +61,10 @@ import { createWsHandlers } from './ws-handler.js';
 import { createRouteHandler } from './routes.js';
 import type { CreateSessionOptions } from './routes.js';
 import { makeId, getSessionCounter, resolveSpawn, resolveSessionCwd } from './routes.js';
-import { registerSettingsIntegration, registerSettingsNamespace, SETTINGS_NS } from './settings/index.js';
+import { registerSettingsIntegration, registerSettingsNamespace } from './settings/index.js';
+import type { SettingsChannel } from './settings/index.js';
 import type { TerminalProfile } from './terminal/index.js';
-import { detectTerminalProfiles, mergeProfiles } from './terminal/index.js';
+import { detectTerminalProfiles, mergeProfiles, settleProfileTable } from './terminal/index.js';
 
 const log = createLogger('terminal-host');
 
@@ -252,8 +253,8 @@ export function apply(ctx: Context, config: Config): void {
      * 终端配置表（已合并探测结果的完整列表）。
      *
      * 启动时由 prepareProfiles() 求值一次并缓存——探测涉及多次 where/which
-     * 子进程调用，不适合每次 /config 请求都重跑。配置热更新时由
-     * rebuildProfiles() 重建。
+     * 子进程调用，不适合每次 /config 请求都重跑。settings 就绪后由
+     * settleProfiles() 按持久层读回值重算并就地刷新。
      */
     get profiles(): readonly TerminalProfile[] {
       return cachedProfiles;
@@ -297,46 +298,65 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /**
-   * 启动时求值一次配置表并缓存。
+   * 启动时求值一次配置表并缓存（快路径）。
    *
-   * 若配置项为空（首次安装），把探测结果写回配置——这样用户对自动探测项改的
-   * 名字能跨重启保留，且下次启动不必再全量探测。
-   *
-   * 写入走 settings 服务的 update(ns, patch)：Volatile 引用是只读视图，没有
-   * setter。settings 服务在 apply 时未必就绪，所以用 ctx.inject 子级延迟注册；
-   * 写失败（只读 profile / 无 settings 服务）只记警告，不阻断插件启动。
+   * volatile 配置通道这里读不到已保存表也没关系——结果只是初值，settings
+   * 就绪后 settleProfiles() 会按持久层读回值重算并就地刷新。
    */
   function prepareProfiles(): TerminalProfile[] {
     const saved = parseProfiles(config.terminalProfiles.get());
-    const detected = detectTerminalProfiles();
-    const merged = mergeProfiles(saved, detected);
-
-    // 首次运行：把探测结果落盘，后续启动只补增量
-    if (saved.length === 0 && merged.length > 0) {
-      const payload = JSON.stringify(merged);
-      ctx.inject(['settings'], (sctx) => {
-        const settings = sctx.settings as { update?: (ns: string, patch: object) => Promise<void> };
-        if (typeof settings.update !== 'function') return;
-        // 命名空间必须与 settings 集成注册的 SETTINGS_NS 逐字一致——
-        // 此前误用包名派生串（PKG_NAME 去前缀 = 'oh-my-terminal'），与注册的
-        // 'terminal-panel' 对不上，首次落盘恒报「namespace not registered」
-        void settings.update(SETTINGS_NS, { terminalProfiles: payload })
-          .then(() => { log.info(`终端配置表已初始化：探测到 ${merged.length} 个终端`); })
-          .catch((error: unknown) => {
-            const msg = error instanceof Error ? error.message : String(error);
-            log.warn(`终端配置表写入失败，仅本次运行有效：${msg}`);
-          });
-      });
-    }
-    return merged;
+    return mergeProfiles(saved, detectedProfiles);
   }
 
-  /** 启动时求值的终端配置表（探测 + 合并结果） */
-  // 命名空间注册必须先于 prepareProfiles 的首跑写回（时序竞态：写回早于注册会
-  // 报「namespace is not registered」）——故在此提前注册，settings/index.ts
-  // 内部保留幂等兜底
-  registerSettingsNamespace(ctx, Config);
+  /**
+   * settings 就绪后按持久层落定配置表：读回已保存表 → 合并探测结果 → 仅首跑
+   * 落盘 → 就地刷新缓存。
+   *
+   * 读写必须走同一通道（settings user 层）：旧实现在 apply 期读 volatile 配置、
+   * 却把首跑结果写进 settings user 层，两个通道互不可见，saved 恒为空——每次
+   * 启动都判首跑，重新生成配置 id 并覆盖用户改过的 name。就地刷新（splice 保持
+   * 数组身份）让 routes、settings bridge 与 runtimeSettings.profiles 持有的引用
+   * 同步生效。
+   *
+   * @param channel - settings 命名空间读写通道（settings/index.ts 逐能力探测）
+   */
+  function settleProfiles(channel: SettingsChannel): void {
+    const persisted = channel.read()?.terminalProfiles;
+    // 通道值非字符串（宿主异常形态，如未解包的 volatile 引用）时回落 volatile
+    // 配置读；空串是合法的"用户清空配置表"，不再回落
+    const raw = typeof persisted === 'string' ? persisted : config.terminalProfiles.get();
+    const saved = parseProfiles(raw);
+    const { merged, persistPayload } = settleProfileTable(saved, detectedProfiles);
+
+    // 首跑落盘：异步写回，失败只降级警告（只读 profile /老宿主不阻断启动）
+    if (persistPayload !== null) {
+      const persist = async (): Promise<void> => {
+        try {
+          // 命名空间必须与 settings 集成注册的 SETTINGS_NS 逐字一致——
+          // 此前误用包名派生串（PKG_NAME 去前缀 = 'oh-my-terminal'），与注册的
+          // 'terminal-panel' 对不上，首次落盘恒报「namespace not registered」
+          await channel.update({ terminalProfiles: persistPayload });
+          log.info(`终端配置表已初始化：探测到 ${merged.length} 个终端`);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          log.warn(`终端配置表写入失败，仅本次运行有效：${msg}`);
+        }
+      };
+      void persist();
+    } else if (saved.length > 0) {
+      log.info(`终端配置表已读回：持久层 ${saved.length} 项，合并探测后 ${merged.length} 项`);
+    }
+
+    cachedProfiles.splice(0, cachedProfiles.length, ...merged);
+  }
+
+  /** 启动时探测结果（只探测一次：where/which 子进程调用有成本） */
+  const detectedProfiles = detectTerminalProfiles();
+  /** 启动时求值的终端配置表（初值；settings 就绪后由 settleProfiles 就地刷新） */
   const cachedProfiles: TerminalProfile[] = prepareProfiles();
+  // 命名空间注册与首跑落盘/读回落定同回调内先注册后读写，天然有序——
+  // 写回早于注册会报「namespace is not registered」（时序竞态）
+  registerSettingsNamespace(ctx, Config, settleProfiles);
 
   /** id -> 会话记录 */
   const sessions = new Map<string, SessionRecord>();

@@ -41,4 +41,5 @@ export {
   validateUpdatePath,
   updatePath,
   mergeProfiles,
+  settleProfileTable,
 } from './store.js';
