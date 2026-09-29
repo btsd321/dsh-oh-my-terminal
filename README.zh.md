@@ -1,6 +1,6 @@
 # dsh-oh-my-terminal
 
-[![version](https://img.shields.io/badge/version-0.2.6-blue)](package.json)
+[![version](https://img.shields.io/badge/version-0.2.7-blue)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.0.0-brightgreen)](package.json)
 
