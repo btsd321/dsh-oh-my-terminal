@@ -6,7 +6,7 @@
  *              registerSessionWs 三个闭包函数。
  *
  *              webServer 服务的路由与升级路由类型直接采用官方
- *              @deepseek-ai/dsh-host-webserver（0.1.7-rc.2，devDependencies 提供
+ *              @deepseek-ai/dsh-host-webserver（0.2.0-rc.2，devDependencies 提供
  *              类型源）并 re-export 供 index.ts 等模块共享——import type 构建
  *              期擦除，插件产物不携带对该包的运行时引用，运行期由宿主提供
  *              webServer 服务实例。官方 d.ts 同时声明 cordis Context 的

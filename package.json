@@ -35,11 +35,11 @@
     "@deepseek-ai/schemastery": "^3.18.0"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-brand": "0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-shortcuts": "0.2.0-rc.1",
-    "@deepseek-ai/dsh-client-store": "0.2.0-rc.1",
-    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.1",
-    "@deepseek-ai/dsh-settings": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-brand": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-shortcuts": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "@types/ws": "^8.5.0",
