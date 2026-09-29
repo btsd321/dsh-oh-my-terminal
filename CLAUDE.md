@@ -53,34 +53,43 @@ pnpm exec tsx --test tests/unit/*.test.ts
 
 ```
 src/
-├── index.ts                # 宿主半入口（cordis 插件壳 + settings 集成 + 会话生命周期 + loadPty 懒加载）
+├── index.ts                # 宿主半入口（cordis 插件壳 + settings 集成 + 会话生命周期 + loadPty 懒加载 + prepareProfiles/settleProfiles 配置表落定）
 ├── routes.ts               # HTTP 路由处理器工厂（createRouteHandler + 辅助函数）
 ├── ws-handler.ts           # WebSocket 处理器工厂（createWsHandlers + WebServer 类型导出）
-├── client.tsx              # 浏览器半入口（TerminalPanel 组合壳 + 插件注册 + injectStyles 调用）
+├── client.tsx              # 浏览器半入口（TerminalPanel 组合壳 + 插件注册 + shortcuts 命令注册 + injectStyles 调用）
 ├── client/
 │   ├── types.ts            # 共享类型定义（TerminalInstance, TerminalGroup, TerminalState, TerminalAction, API 响应）
-│   ├── hooks.ts            # 自定义 Hooks（terminalReducer + useTerminalState + useConfig + usePanelHeight + usePanelGeometry + useTerminalTabs）
+│   ├── hooks.ts            # 兼容壳（re-export terminal/ 子模块，保持对外接口不变）
 │   ├── term-pane.tsx       # TermPane 组件（xterm + WebSocket + resize）+ RestartButton 组件
 │   ├── styles.ts           # CSS 样式常量（PANEL_CSS）+ Campbell 暗色主题 + xterm 调优常量 + injectStyles()
 │   ├── dropdown.tsx        # +号旁下拉菜单组件（新建/拆分/按种类新建）
 │   ├── side-list.tsx       # 右侧终端列表面板（树形前缀 + 右键重命名 + useMemo 缓存）
+│   ├── shortcut-bridge.ts  # shortcuts 服务接入信号桥（命令注册状态 + 面板切换回调，软探测兼容旧宿主）
 │   ├── terminal/
-│   │   └── use-tabs.ts     # 终端标签页状态管理（useTerminalTabs Hook：newTab/splitTerminal/closeTerminal/renameTerminal）
+│   │   ├── reducer.ts          # 终端状态 reducer（terminalReducer 纯函数 + createInitialState）
+│   │   ├── use-terminal-state.ts # 终端状态管理 Hook（useTerminalState：useReducer 封装 + 启动恢复）
+│   │   ├── use-panel-geometry.ts # 面板几何与高度管理（usePanelGeometry + usePanelHeight：拖拽调高 + localStorage + 对话列几何测量）
+│   │   └── use-tabs.ts         # 终端标签页状态管理（useTerminalTabs + useConfig：newTab/splitTerminal/closeTerminal/renameTerminal + 配置拉取）
 │   ├── settings/
 │   │   ├── types.ts        # 设置页面类型定义（SettingsPageProps、ConfigWithProfiles）
 │   │   ├── store.ts        # 设置页面状态管理（useSettingsState Hook）
-│   │   └── card.tsx        # 设置卡片组件（SettingsCard）
+│   │   ├── card.tsx        # 设置卡片组件（SettingsCard）
+│   │   ├── profile-table.tsx # 终端配置表格组件（TerminalProfile[] CRUD UI：inline 编辑/新增/删除/origin 约束）
+│   │   ├── api.ts          # Settings Bridge HTTP 客户端（封装与宿主半 Settings Bridge 的 HTTP 交互）
+│   │   └── styles.ts       # 配置表单样式模块（injectSettingsStyles + CSS 自定义属性主题自适应）
 │   ├── icons.tsx           # SVG 图标组件集合（10 个纯函数）
 │   └── clipboard.ts        # 剪贴板纯函数（Async Clipboard API + legacy 双层降级）
 ├── terminal/
-│   ├── index.ts            # 终端模块统一导出（kinds/detect/resolve/store）
+│   ├── index.ts            # 终端模块统一导出（kinds/detect/resolve/store + settleProfileTable）
 │   ├── kinds.ts            # 终端种类定义（TerminalKind 联合类型 + KIND_SPECS 平台映射表）
 │   ├── detect.ts           # 终端探测（resolveCommand/detectGitBash/detectTerminalProfiles）
 │   ├── resolve.ts          # 配置解析（resolveProfile：TerminalProfile → node-pty spawn 参数）
-│   └── store.ts            # 配置表校验（validateAdd/validateUpdate/validateDelete/addProfile/updateProfile/deleteProfile）
+│   └── store.ts            # 配置表校验（validateAdd/validateUpdate/validateDelete/addProfile/updateProfile/deleteProfile + settleProfileTable 落盘决策）
 ├── settings/
-│   ├── namespace.ts        # Settings 命名空间定义（SettingsNamespace）
-│   └── bridge.ts           # Settings 桥接层（prepareProfiles：配置表与探测结果合并）
+│   ├── index.ts            # settings bridge 模块入口（registerSettingsIntegration + registerSettingsNamespace + SettingsChannel 读写通道 + volatile 解包）
+│   ├── namespace.ts        # Settings 命名空间定义（SettingsNamespace + SETTINGS_NS 常量）
+│   ├── bridge.ts           # Settings 桥接路由工厂（createSettingsBridgeRoutes：describe + mutate 路由，SettingsLike 最小接口）
+│   └── patch.ts            # JSON Patch 操作类型与构造函数（op:'set' 路径数组形式，零额外依赖）
 ├── persistence.ts          # 会话持久化层（SessionStore：日志落盘/清理、元数据读写、启动恢复）
 ├── platform.ts             # 平台适配层（PlatformAdapter 接口 + POSIX/Windows 适配器 + 默认 shell 探测）
 ├── constants.ts            # 协议/尺寸/快捷键/环境变量/文件名常量
@@ -96,10 +105,11 @@ src/
   index.ts → routes.ts → terminal/, settings/, constants.ts, platform.ts, persistence.ts, server-command.ts, logger.ts
   index.ts → ws-handler.ts → constants.ts, persistence.ts
   index.ts → terminal/, settings/, constants.ts, platform.ts, persistence.ts, logger.ts
-  settings/bridge.ts → terminal/detect.ts, terminal/kinds.ts, logger.ts
+  settings/index.ts → settings/bridge.ts, settings/namespace.ts, settings/patch.ts
+  settings/bridge.ts → settings/namespace.ts, settings/patch.ts
   terminal/detect.ts → terminal/kinds.ts
   terminal/resolve.ts → terminal/kinds.ts, platform.ts
-  terminal/store.ts → terminal/kinds.ts
+  terminal/store.ts → terminal/kinds.ts, terminal/detect.ts
   platform.ts → terminal/detect.ts（复用 resolveCommand）
   persistence.ts → constants.ts, logger.ts
 
@@ -107,11 +117,17 @@ src/
   client.tsx → client/types.ts, client/icons.tsx, client/clipboard.ts,
                client/dropdown.tsx, client/side-list.tsx, client/hooks.ts,
                client/styles.ts, client/term-pane.tsx, client/settings/,
-               client/terminal/, logger.ts
-  client/hooks.ts → client/types.ts, shortcut.ts, logger.ts
-  client/terminal/use-tabs.ts → client/types.ts, logger.ts
-  client/settings/card.tsx → client/settings/types.ts, client/settings/store.ts, client/icons.tsx
+               client/shortcut-bridge.ts, logger.ts
+  client/hooks.ts → client/terminal/*（re-export 兼容壳：reducer/use-terminal-state/use-panel-geometry/use-tabs）
+  client/shortcut-bridge.ts → client/types.ts, constants.ts, logger.ts
+  client/terminal/reducer.ts → client/types.ts, logger.ts
+  client/terminal/use-terminal-state.ts → client/terminal/reducer.ts, client/types.ts, logger.ts
+  client/terminal/use-panel-geometry.ts → client/types.ts, constants.ts, logger.ts
+  client/terminal/use-tabs.ts → client/types.ts, shortcut.ts, client/shortcut-bridge.ts, constants.ts, logger.ts
+  client/settings/card.tsx → client/settings/types.ts, client/settings/api.ts, client/settings/store.ts, client/settings/profile-table.tsx, client/icons.tsx
   client/settings/store.ts → client/settings/types.ts
+  client/settings/profile-table.tsx → client/settings/types.ts, client/settings/api.ts
+  client/settings/api.ts → client/settings/types.ts
   client/dropdown.tsx → client/types.ts, client/icons.tsx
   client/side-list.tsx → client/types.ts, client/icons.tsx
   client/term-pane.tsx → client/types.ts, client/clipboard.ts, client/icons.tsx, client/styles.ts
@@ -135,7 +151,9 @@ src/
 | `path` | 可执行文件路径。留空则按 `type` 在 `$PATH` 中解析 |
 | `origin` | `auto`（启动探测）/ `user`（手动新增）。`auto` 项不可删除、path 不可改，但可改名 |
 
-**启动流程**：`prepareProfiles()` 在 apply 时跑一次 `$PATH` 探测（`detectTerminalProfiles()`），与已保存的配置表合并（`mergeProfiles()`：已保存项全保留，探测到的新 type/path 补进去）。首次运行（配置表为空）时把结果写回配置。
+**启动流程**（两阶段，读写同通道）：`detectTerminalProfiles()` 在 apply 时跑一次 `$PATH` 探测（`where`/`which` 子进程调用有成本，只跑一次并缓存）；`prepareProfiles()` 读 volatile 配置初值与探测结果合并（`mergeProfiles()`：已保存项全保留，探测到的新 type/path 补进去）产出初值，routes 立即可用；settings 服务就绪后 `settleProfiles()` 经 `SettingsChannel`（`registerSettingsNamespace` 的 `onReady` 回调交出，read/update 同一命名空间）读回持久层已保存表，重算合并结果并 `cachedProfiles.splice(...)` 就地刷新（保持数组身份，routes/bridge 闭包引用同步生效）。首跑（持久层读回为空）时把探测结果落盘，读回非空时绝不写回（用户改过的 name/手动新增项原样保留）。
+
+**读写同通道**：必须读写走同一 settings 通道（owner scope → 服务级 get → describe 扫描，逐能力探测）。旧实现读 cordis loader 的 volatile 引用、写 settings user 层，两通道互不可见导致读回恒空、每次启动判首跑并覆盖用户配置。volatile 字段的稳定引用（cosmokit `Symbol.for('cosmokit.volatile.write')`）需在通道内解包为标量，否则 JSON 序列化后只剩 `{}`、字符串字段永远"读不到"。
 
 **路径解析**：`resolveProfile()` 把 `TerminalProfile` 转成 node-pty 的 `{ file, args }`。**Windows 上 node-pty 不做 PATH/PATHEXT 查找**，裸命令名（`pwsh`、`cmd`）会直接以 `File not found: ` 失败，必须给完整路径——`resolveCommand()` 用 `where`/`which` 解析，并过滤 `WindowsApps` 下的 App Execution Alias 占位符（0 字节重解析点，spawn 必失败）。
 
