@@ -206,14 +206,14 @@ export interface TerminalTabsParams {
 
 /** useTerminalTabs 返回值 */
 export interface TerminalTabs {
-  /** + 按钮新建终端（创建新实例 + 独立组） */
-  newTab: (profileId?: string, cmdline?: string) => Promise<void>;
+  /** + 按钮新建终端（创建新实例 + 独立组）。cwdOverride 优先于 workspaceCwd */
+  newTab: (profileId?: string, cmdline?: string, cwdOverride?: string | null) => Promise<void>;
   /** ✕ 按钮关闭终端（从 instances 和 groups 中同时移除） */
   closeTab: (id: string) => Promise<void>;
   /** ⟳ 重启活跃终端（更新 instances 和 groups 中的引用） */
   restartActive: () => Promise<void>;
-  /** 拆分终端（在当前活跃实例所在 group 中插入新实例） */
-  splitTerminal: (profileId?: string, cmdline?: string) => Promise<void>;
+  /** 拆分终端（在当前活跃实例所在 group 中插入新实例）。cwdOverride 优先于 workspaceCwd */
+  splitTerminal: (profileId?: string, cmdline?: string, cwdOverride?: string | null) => Promise<void>;
   /** WebSocket close 事件回调（标记实例已退出） */
   onExit: (id: string) => void;
 }
@@ -247,10 +247,10 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
    * @param terminalType - 终端种类 id（可选，缺省用默认 shell）
    * @param cmdline - 完整启动命令（可选，优先于 terminalType）
    */
-  const newTab = useCallback(async (profileId?: string, cmdline?: string): Promise<void> => {
+  const newTab = useCallback(async (profileId?: string, cmdline?: string, cwdOverride?: string | null): Promise<void> => {
     dispatch({ type: 'SET_BUSY', busy: true });
     try {
-      const cwd = workspaceCwd ?? activeInstance?.cwd ?? null;
+      const cwd = cwdOverride ?? workspaceCwd ?? activeInstance?.cwd ?? null;
       const body: Record<string, unknown> = { cwd, sessionId };
       /* 终端配置 id：宿主半按 id 查表解析 path 与交互参数 */
       if (typeof profileId === 'string' && profileId.length > 0) body.profileId = profileId;
@@ -290,15 +290,15 @@ export function useTerminalTabs(params: TerminalTabsParams): TerminalTabs {
    * @param profileId - 终端配置 id（可选，缺省用默认 shell）
    * @param cmdline - 完整启动命令（可选，优先于 profileId）
    */
-  const splitTerminal = useCallback(async (profileId?: string, cmdline?: string): Promise<void> => {
+  const splitTerminal = useCallback(async (profileId?: string, cmdline?: string, cwdOverride?: string | null): Promise<void> => {
     /* 无活跃组时退化为新建独立组 */
     if (activeGroup === null) {
-      await newTab(profileId, cmdline);
+      await newTab(profileId, cmdline, cwdOverride);
       return;
     }
     dispatch({ type: 'SET_BUSY', busy: true });
     try {
-      const cwd = workspaceCwd ?? activeInstance?.cwd ?? null;
+      const cwd = cwdOverride ?? workspaceCwd ?? activeInstance?.cwd ?? null;
       const body: Record<string, unknown> = { cwd, sessionId };
       if (typeof profileId === 'string' && profileId.length > 0) body.profileId = profileId;
       if (typeof cmdline === 'string' && cmdline.length > 0) body.cmdline = cmdline;
