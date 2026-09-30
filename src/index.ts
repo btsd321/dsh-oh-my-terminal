@@ -394,6 +394,7 @@ export function apply(ctx: Context, config: Config): void {
     );
     const id = makeId();
     const sessionCwd = resolveSessionCwd(options.cwd, options.sessionId, workspaceRegistry);
+    log.info(`[createSession] options: cwd=${options.cwd ?? 'undefined'}, sessionId=${options.sessionId ?? 'undefined'} → resolvedCwd=${sessionCwd}, ownerSessionId=${options.sessionId ?? 'null'}`);
 
     // 懒加载原生绑定：失败时抛 TerminalError，由路由层转成 HTTP 500 中文提示
     const { spawn } = await loadPty();

@@ -326,9 +326,11 @@ export function createRouteHandler(
       // GET /sessions — 列出所有会话（含已退出的历史），支持 ?sessionId= 过滤
       if (rest === '/sessions' && method === 'GET') {
         const querySessionId = url.searchParams.get('sessionId');
+        const allSessions = [...sessions.values()];
         const filtered = querySessionId !== null
-          ? [...sessions.values()].filter(s => s.ownerSessionId === querySessionId)
-          : [...sessions.values()];
+          ? allSessions.filter(s => s.ownerSessionId === querySessionId)
+          : allSessions;
+        log.info(`[GET /sessions] querySessionId=${querySessionId ?? 'null'}, total=${allSessions.length}, filtered=${filtered.length}, ownerSessionIds=[${allSessions.map(s => s.ownerSessionId ?? 'null').join(',')}]`);
         json(res, 200, {
           sessions: filtered.map(s => ({
             id: s.id,

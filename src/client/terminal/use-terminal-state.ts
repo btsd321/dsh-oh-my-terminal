@@ -55,10 +55,11 @@ export interface TerminalStateResult {
  * 与 busy/bootReady 合并为单一 TerminalState，通过 terminalReducer 处理所有操作，
  * 消除多 setter 同步遗漏风险。
  *
- * 挂载时拉取 /sessions 恢复当前 DSH 会话下的所有存活终端实例与组。面板按对话注入，
- * 切换工作区会重挂本组件，实例会丢——但宿主仍持有 PTY。在此恢复（只 attach，绝不
- * create——无人打开的挂载不产孤儿 PTY）。bootOnce 守卫防 React 18 严格模式双执行
- * 重复拉取。
+ * 挂载时拉取 /sessions 恢复当前 DSH 会话下的所有存活终端实例与组。sessionId 变化
+ * 时重置 bootOnce 重新恢复该工作区的终端（切换工作区时旧终端"挂到后台"——前端隐藏
+ * 但宿主半 PTY 存活，切回来时恢复）。始终 dispatch RESTORE（即使空数组）清空旧工作区
+ * 的终端，让 auto-new 逻辑检测到 instances=0 并自动新建。bootOnce 守卫防 React 18
+ * 严格模式双执行重复拉取。
  *
  * @param sessionId - 当前 DSH 会话 id，用于按会话过滤恢复终端；undefined 时恢复全部
  * @returns state 与 dispatch
@@ -90,30 +91,28 @@ export function useTerminalState(sessionId: string | undefined): TerminalStateRe
          * 不如让首次打开逻辑自动创建全新终端。 */
         const all = list.sessions ?? [];
         const live = all.filter(x => !x.exited);
-        if (live.length > 0) {
-          // 1. 将每个存活 SessionEntry 映射为 TerminalInstance
-          const restoredInstances: TerminalInstance[] = live.map((x: SessionEntry): TerminalInstance => ({
-            id: x.id,
-            title: x.title,
-            shell: x.shell,
-            cwd: x.cwd ?? null,
-            exited: false,
-          }));
-          // 2. 每个实例独立成组（恢复场景暂不重建拆分布局，简化为单实例组）
-          const restoredGroups: TerminalGroup[] = restoredInstances.map((inst: TerminalInstance): TerminalGroup => ({
-            id: inst.id,
-            instances: [inst],
-            activeInstanceId: inst.id,
-          }));
-          // 3. 激活第一个实例
-          const firstId = restoredInstances[0].id;
-          dispatch({
-            type: 'RESTORE',
-            instances: restoredInstances,
-            groups: restoredGroups,
-            activeInstanceId: firstId,
-          });
-        }
+        // 映射存活的 SessionEntry 为 TerminalInstance
+        const restoredInstances: TerminalInstance[] = live.map((x: SessionEntry): TerminalInstance => ({
+          id: x.id,
+          title: x.title,
+          shell: x.shell,
+          cwd: x.cwd ?? null,
+          exited: false,
+        }));
+        // 每个实例独立成组（恢复场景暂不重建拆分布局，简化为单实例组）
+        const restoredGroups: TerminalGroup[] = restoredInstances.map((inst: TerminalInstance): TerminalGroup => ({
+          id: inst.id,
+          instances: [inst],
+          activeInstanceId: inst.id,
+        }));
+        // 始终 dispatch RESTORE（即使空数组）——切换工作区时清空旧工作区的终端，
+        // 让 auto-new 逻辑检测到 instances=0 并自动新建
+        dispatch({
+          type: 'RESTORE',
+          instances: restoredInstances,
+          groups: restoredGroups,
+          activeInstanceId: restoredInstances[0]?.id ?? '',
+        });
         dispatch({ type: 'SET_BOOT_READY' });
       } catch (err) {
         log.error('启动恢复失败', err);
