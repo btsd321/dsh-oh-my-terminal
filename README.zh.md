@@ -1,6 +1,6 @@
 # dsh-oh-my-terminal
 
-[![version](https://img.shields.io/badge/version-0.2.7-blue)](package.json)
+[![version](https://img.shields.io/badge/version-0.2.8-blue)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.0.0-brightgreen)](package.json)
 
@@ -16,6 +16,7 @@ DSH Web GUI 的底部终端面板插件，基于 `@lydell/node-pty` 提供多终
 - **跨平台**：Windows ConPTY / POSIX openpty，由 `@lydell/node-pty` 自动选择，二进制随 tarball 分发，安装即用
 - **配置表驱动终端**：终端配置表（type / name / path）驱动新建终端；启动时自动探测 $PATH 中的终端，可在设置界面新增、改名、编辑路径
 - **字体可配置**：字体族、字号、行高可配置，配置变更对已打开终端即时生效
+- **DSH-better-sidebar 兼容**：运行时自动检测 [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)，检测到时切换为兼容模式——通过 `ctx.betterSidebar.registerTab()` 注册"终端"tab 嵌入其底部工作台，替代独立底部面板；PTY 会话不绑定 DSH session 的 write handle，从根源消除与 DSH-better-sidebar 自带终端的冲突。当宿主支持 `TabDescriptor.rightActions`（v0.25.0+）时，终端操作按钮（新建 / 拆分 / 重启）注入 tab 标签条右端，VSCode 风格单层栏；不支持时回退为 tab 内容区顶部头部栏（两层显示）
 
 ## 安装
 
@@ -94,6 +95,8 @@ src/
 │   ├── icons.tsx         # SVG 图标组件
 │   ├── clipboard.ts      # 剪贴板工具函数
 │   ├── shortcut-bridge.ts # shortcuts 服务接入桥（命令注册 + 面板切换回调）
+│   ├── compat.ts          # DSH-better-sidebar 兼容模式检测（软探测 ctx.betterSidebar + 服务最小接口声明）
+│   ├── sidebar-tab.tsx    # 侧边栏终端 tab 组件（兼容模式：嵌入 DSH-better-sidebar 底部工作台，不绑定 DSH sessionId）
 │   ├── settings/         # 设置界面（types / store / card / profile-table / api / styles）
 │   └── terminal/         # 终端标签页状态（use-tabs / reducer / use-terminal-state / geometry）
 ├── persistence.ts        # 会话持久化层（日志落盘 / 元数据 / 启动恢复）

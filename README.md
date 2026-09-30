@@ -1,6 +1,6 @@
 # dsh-oh-my-terminal
 
-[![version](https://img.shields.io/badge/version-0.2.7-blue)](package.json)
+[![version](https://img.shields.io/badge/version-0.2.8-blue)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![node](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.0.0-brightgreen)](package.json)
 
@@ -18,6 +18,7 @@ A bottom terminal panel plugin for DSH Web GUI. Powered by `@lydell/node-pty`, i
 - **Cross-platform**: Windows ConPTY and POSIX openpty are selected automatically by `@lydell/node-pty`; pre-compiled binaries ship with the package, nothing to compile
 - **Profile-driven terminals**: a configurable terminal profile table (type / name / path) drives new-terminal creation; profiles are auto-detected at startup and can be added, renamed, and edited in the settings UI
 - **Configurable fonts**: font family, size, and line height are adjustable and hot-reload on open terminals
+- **DSH-better-sidebar compatibility**: auto-detects [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) at runtime and switches to compat mode — registers a "Terminal" tab in its bottom workbench instead of the standalone dock; PTY sessions are not bound to the DSH session write handle, eliminating conflicts with DSH-better-sidebar's own terminal. When the host supports `TabDescriptor.rightActions` (v0.25.0+), the terminal's action buttons (new / split / restart) are injected into the tab strip's right end, VSCode-style; otherwise it falls back to a header row inside the tab content area
 
 ## Installation
 
@@ -96,6 +97,8 @@ src/
 │   ├── icons.tsx         # SVG icon components
 │   ├── clipboard.ts      # Clipboard utility functions
 │   ├── shortcut-bridge.ts # Shortcuts service integration (command registration + toggle bridge)
+│   ├── compat.ts          # DSH-better-sidebar compat mode detection (soft-probe ctx.betterSidebar + service interface)
+│   ├── sidebar-tab.tsx    # Sidebar terminal tab (compat mode: embed in DSH-better-sidebar bottom workbench, no DSH session binding)
 │   ├── settings/         # Settings UI (types / store / card / profile-table / api / styles)
 │   └── terminal/         # Terminal tab state (use-tabs / reducer / use-terminal-state / geometry)
 ├── persistence.ts        # Session persistence (log storage, metadata, startup restore)
