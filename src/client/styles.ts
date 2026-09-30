@@ -114,6 +114,11 @@ export const TERM_THEME: Record<string, string> = {
 
 /** 面板全局 CSS 字符串（含所有 .dshTerm* 样式规则） */
 export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:Inter,var(--dsw-font-family)}
+/* 兼容模式根容器：嵌入 DSH-better-sidebar 底部工作台 tab 内容区。
+ * 覆盖 .dshTermRoot 的 position:fixed/bottom:0/z-index——这些是独立模式
+ * 底部固定面板的定位，在 tab 内容区里会导致组件脱离文档流覆盖整个侧边栏。
+ * 改为 position:relative 填满 tab 内容区（flex column 布局） */
+.dshTermSidebarRoot{position:relative;bottom:auto;z-index:auto;width:100%;height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--dsw-specific-tip)}
 .dshTermBar{box-sizing:border-box;width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--dsw-specific-tip);border-top:1px solid var(--dsw-alias-border-l1);cursor:pointer;color:var(--dsw-alias-label-primary);text-align:left;user-select:none;-webkit-user-select:none}
 .dshTermBar:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
 .dshTermBarLead{color:var(--dsw-alias-label-tertiary);flex:none;place-items:center;display:grid}
