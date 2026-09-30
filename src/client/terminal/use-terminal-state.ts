@@ -68,8 +68,15 @@ export function useTerminalState(sessionId: string | undefined): TerminalStateRe
   const [state, dispatch] = useReducer(terminalReducer, createInitialState());
   /** 恢复已完成标记（防止 React 18 严格模式双执行重复拉取） */
   const bootOnce = useRef(false);
+  /** 上一次恢复用的 sessionId——变化时重置 bootOnce 重新恢复 */
+  const lastSessionId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
+    /* sessionId 变化时重置 bootOnce，允许重新恢复该工作区的终端 */
+    if (lastSessionId.current !== sessionId) {
+      lastSessionId.current = sessionId;
+      bootOnce.current = false;
+    }
     if (bootOnce.current) return;
     bootOnce.current = true;
     void (async (): Promise<void> => {
