@@ -121,9 +121,16 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
 
   /** 首次可见已处理标记（只在首次可见时创建终端，避免每次切 tab 都新建） */
   const openHandled = useRef(false);
+  /** 上一次恢复用的 sessionId——变化时重置 openHandled，允许新工作区自动新建终端 */
+  const lastSessionId = useRef<string | undefined>(undefined);
 
-  /* 首次可见且无恢复的终端：创建一个会话。tab 切换隐藏→显示时不重复创建 */
+  /* 首次可见且无恢复的终端：创建一个会话。tab 切换隐藏→显示时不重复创建。
+   * 切换工作区（sessionId 变化）时也重置标记——新工作区若无终端则自动新建 */
   useEffect(() => {
+    if (lastSessionId.current !== sessionId) {
+      lastSessionId.current = sessionId;
+      openHandled.current = false;
+    }
     if (!visible) {
       openHandled.current = false;
       return;
@@ -131,7 +138,7 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
     if (!bootReady || instances.length > 0 || openHandled.current) return;
     openHandled.current = true;
     void newTab();
-  }, [visible, bootReady, instances.length, newTab]);
+  }, [visible, bootReady, instances.length, newTab, sessionId]);
 
   /*
    * rightActions → content 操作桥接：监听 DOM 自定义事件。
