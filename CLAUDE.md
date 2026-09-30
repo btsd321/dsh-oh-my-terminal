@@ -67,6 +67,7 @@ src/
 │   ├── shortcut-bridge.ts  # shortcuts 服务接入信号桥（命令注册状态 + 面板切换回调，软探测兼容旧宿主）
 │   ├── compat.ts          # DSH-better-sidebar 兼容模式检测（软探测 ctx.betterSidebar + 服务最小接口声明）
 │   ├── sidebar-tab.tsx    # 侧边栏终端 tab 组件（兼容模式：嵌入 DSH-better-sidebar 底部工作台，不绑定 DSH sessionId）
+│   ├── terminal-render.tsx # 终端组渲染共享函数（renderTerminalGroups + findProfile + findActiveInstance/Group，独立模式与兼容模式共用）
 │   ├── terminal/
 │   │   ├── reducer.ts          # 终端状态 reducer（terminalReducer 纯函数 + createInitialState）
 │   │   ├── use-terminal-state.ts # 终端状态管理 Hook（useTerminalState：useReducer 封装 + 启动恢复）
@@ -76,7 +77,9 @@ src/
 │   │   ├── types.ts        # 设置页面类型定义（SettingsPageProps、ConfigWithProfiles）
 │   │   ├── store.ts        # 设置页面状态管理（useSettingsState Hook）
 │   │   ├── card.tsx        # 设置卡片组件（SettingsCard）
-│   │   ├── profile-table.tsx # 终端配置表格组件（TerminalProfile[] CRUD UI：inline 编辑/新增/删除/origin 约束）
+│   │   ├── profile-table.tsx # 终端配置表格容器组件（ProfileTable：表头 + 行列表 + 新增表单入口）
+│   │   ├── profile-row.tsx    # 终端配置表格行组件（ProfileRow：inline 编辑 name/path + 删除按钮）
+│   │   ├── profile-add-form.tsx # 新增终端配置表单组件（AddProfileForm：type/name/path 输入 + 添加/取消）
 │   │   ├── api.ts          # Settings Bridge HTTP 客户端（封装与宿主半 Settings Bridge 的 HTTP 交互）
 │   │   └── styles.ts       # 配置表单样式模块（injectSettingsStyles + CSS 自定义属性主题自适应）
 │   ├── icons.tsx           # SVG 图标组件集合（10 个纯函数）
@@ -132,7 +135,9 @@ src/
   client/terminal/use-tabs.ts → client/types.ts, shortcut.ts, client/shortcut-bridge.ts, constants.ts, logger.ts
   client/settings/card.tsx → client/settings/types.ts, client/settings/api.ts, client/settings/store.ts, client/settings/profile-table.tsx, client/icons.tsx
   client/settings/store.ts → client/settings/types.ts
-  client/settings/profile-table.tsx → client/settings/types.ts, client/settings/api.ts
+  client/settings/profile-table.tsx → client/settings/types.ts, client/settings/api.ts, client/settings/profile-row.tsx, client/settings/profile-add-form.tsx
+  client/settings/profile-row.tsx → client/settings/types.ts
+  client/settings/profile-add-form.tsx → client/settings/types.ts
   client/settings/api.ts → client/settings/types.ts
   client/dropdown.tsx → client/types.ts, client/icons.tsx
   client/side-list.tsx → client/types.ts, client/icons.tsx
