@@ -60,6 +60,9 @@ import {
   resetShortcutsState, markShortcutsActive,
   registerPanelToggler, notifyPanelToggle,
 } from './client/shortcut-bridge.js';
+import { detectBetterSidebar } from './client/compat.js';
+import type { BetterSidebarServiceLike } from './client/compat.js';
+import { createTerminalTabDescriptor } from './client/sidebar-tab.js';
 import { SHORTCUT_COMMAND_ID, SHORTCUT_DEFAULTS } from './constants.js';
 import { createLogger } from './logger.js';
 
@@ -116,15 +119,97 @@ export const inject = ['slots'];
  * DSH 设置界面统一配置）；旧宿主无 shortcuts 服务时软探测不命中，维持裸
  * keydown 降级路径。
  *
+ * **DSH-better-sidebar 兼容模式**：用 `ctx.inject(['betterSidebar'], ...)` 等待
+ * DSH-better-sidebar 的注册服务可用。服务可用时切换为兼容模式——注销
+ * `conversation.input.dock` 底部面板（避免与 DSH-better-sidebar 底部工作台的
+ * 终端竞争同一 DSH session 的 write handle），改为通过 `service.registerTab()`
+ * 注册"终端"tab 嵌入 DSH-better-sidebar 底部工作台。兼容模式下 PTY session
+ * 不绑定 DSH sessionId，从根源上消除 session 冲突。
+ *
+ * 激活顺序自适应：DSH-better-sidebar 可能先于或后于本插件激活。
+ * - 先激活：`ctx.get('betterSidebar')` 即时命中，直接走兼容模式
+ * - 后激活：先注册 dock 降级，`ctx.inject` 回调触发时切换为兼容模式
+ * - 永不安装：`ctx.inject` 回调不触发，保持 dock 独立模式
+ *
  * @param ctx - 远端页面的 cordis 上下文
  */
 export function apply(ctx: ClientContext): void {
-  registerToggleShortcut(ctx);
-  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
-    { name: 'conversation.input.dock', id: 'terminal', order: 10 },
-    TerminalPanel,
-  ));
+  // 设置页始终注册（两种模式用户都需配置终端种类/字体等）
   registerSettingsPage(ctx);
+
+  // 即时探测：DSH-better-sidebar 先激活时直接走兼容模式
+  const betterSidebar = detectBetterSidebar(ctx);
+  if (betterSidebar !== undefined) {
+    registerSidebarTab(ctx, betterSidebar);
+    return;
+  }
+
+  // DSH-better-sidebar 尚未激活：先注册独立模式（dock + shortcuts），
+  // 再用 ctx.inject 等待服务可用时切换为兼容模式
+  const dockDisposer = registerStandaloneDock(ctx);
+  registerToggleShortcut(ctx);
+
+  // ctx.inject(['betterSidebar'], cb)：服务可用时回调，永不安装时不触发。
+  // 返回 Fiber（带 dispose 方法），随插件销毁清理（与 DSH-better-sidebar 自身
+  // native surface 的 ctx.inject 用法一致——不用 ctx.effect 包裹）
+  const seat = ctx.inject(['betterSidebar'], (injected: Context) => {
+    const service = detectBetterSidebar(injected);
+    if (service === undefined) return;
+    // 切换：注销独立模式 dock（shortcuts 命令保留——兼容模式下快捷键无害）
+    dockDisposer();
+    // 注册兼容模式 tab
+    registerSidebarTab(ctx, service);
+  });
+  ctx.effect(() => () => { void seat.dispose(); }, 'dsh-oh-my-terminal.better-sidebar-inject');
+}
+
+/**
+ * 注册独立模式底部面板（`conversation.input.dock`），返回注销函数。
+ *
+ * 封装为独立函数，供动态切换时注销。
+ *
+ * @param ctx - 远端页面的 cordis 上下文
+ * @returns 注销 dock 注册的 disposer
+ */
+function registerStandaloneDock(ctx: ClientContext): () => void {
+  // ctx.slots.inject 返回的是声明监听的 disposer，内部 ctx.slots.register
+  // 返回的 disposer 需要在回调里捕获——但 slots.inject 的回调在声明存在时
+  // 触发，返回的 disposer 会注销整条声明。这里直接用 slots.inject 的返回值。
+  return ctx.slots.inject('conversation.input.dock', () => {
+    const regDispose = ctx.slots.register(
+      { name: 'conversation.input.dock', id: 'terminal', order: 10 },
+      TerminalPanel,
+    );
+    return regDispose;
+  }) as () => void;
+}
+
+/**
+ * 兼容模式：通过 DSH-better-sidebar 的 registerTab 注册"终端"tab。
+ *
+ * 不注册 conversation.input.dock（避免与底部工作台终端冲突）。PTY session
+ * 不绑定 DSH sessionId（sidebar-tab 组件内 sessionId 传 undefined），不进入
+ * DSH session 的 write handle 管理体系。
+ *
+ * @param ctx - 远端页面的 cordis 上下文
+ * @param service - DSH-better-sidebar 的 betterSidebar 服务实例
+ */
+function registerSidebarTab(ctx: ClientContext, service: BetterSidebarServiceLike): void {
+  try {
+    // 能力探测：DSH-better-sidebar v0.25.0+ 支持 rightActions（操作按钮注入 tab 栏右端）；
+    // 旧版本不支持时回退到内容区顶部两层显示方案（useHeader=true）
+    const supportsRightActions = service.features?.includes('rightActions') ?? false;
+    const descriptor = createTerminalTabDescriptor(supportsRightActions);
+    const dispose = service.registerTab(descriptor);
+    // 命令随插件销毁注销（registerTab 返回幂等 disposer）
+    ctx.effect(() => dispose, 'dsh-oh-my-terminal.sidebar-tab');
+    log.info(`已接入 DSH-better-sidebar 兼容模式（终端 tab 注册到底部工作台，rightActions=${supportsRightActions}）`);
+  } catch (error) {
+    // 注册抛错（如 tab id 已被其他插件占用）→ 降级为独立模式
+    const msg = error instanceof Error ? error.message : String(error);
+    log.warn(`betterSidebar registerTab 失败，降级为独立模式：${msg}`);
+    registerStandaloneDock(ctx);
+  }
 }
 
 /** 插件在 profile patch 中的条目 id（rowConfigKey 的后半段，不可随意改动） */
