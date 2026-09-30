@@ -49,20 +49,26 @@ const SIDEBAR_TAB_ORDER = 40;
 /** DOM 自定义事件名：rightActions → content 的操作桥接 */
 const SIDEBAR_TAB_ACTION_EVENT = 'dsh-oh-my-terminal:action';
 
-/** rightActions 发给 content 的操作指令（携带 cwd 保证切换工作区后新建终端用新 cwd） */
+/** rightActions 发给 content 的操作指令（携带 cwd + sessionId 保证切换工作区后新建终端用新 cwd 且归到正确工作区） */
 type SidebarTabAction =
-  | { type: 'newTab'; cwd?: string }
-  | { type: 'newTabByProfile'; profileId: string; cwd?: string }
-  | { type: 'splitTerminal'; cwd?: string }
+  | { type: 'newTab'; cwd?: string; sessionId?: string }
+  | { type: 'newTabByProfile'; profileId: string; cwd?: string; sessionId?: string }
+  | { type: 'splitTerminal'; cwd?: string; sessionId?: string }
   | { type: 'restartActive' };
 
 /**
  * 侧边栏终端 tab 内容组件。
  *
  * 复用独立模式 TerminalPanel 的核心 hooks，但适配 DSH-better-sidebar 底部
- * 工作台的 tab 内容区布局，且不绑定 DSH sessionId（防 write handle 冲突）。
+ * 工作台的 tab 内容区布局。用 scope.sessionId 按工作区过滤终端——切换工作区
+ * 时只恢复该工作区的终端，新建终端也归到当前工作区。
  * 操作按钮通过 descriptor.rightActions 注入 tab 栏右端，不在内容区顶部
  * 单独渲染头部行。rightActions 通过 DOM 自定义事件通知本组件执行操作。
+ *
+ * write handle 冲突说明：旧版兼容模式通过 conversation.input.dock 注入底部
+ * 面板，会获取 DSH session write handle，与 DSH-better-sidebar 竞争。改为
+ * tab 模式后不再走 dock，不获取 write handle——ownerSessionId 只是本插件
+ * 元数据（用于 GET /sessions 按工作区过滤），不进入 DSH write handle 体系。
  *
  * @param props - DSH-better-sidebar 注入的 tab 组件 props + useHeader 降级标记
  * @returns 终端 tab 内容根元素
@@ -71,21 +77,8 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
   const { scope, visible, useHeader = false } = props;
   const { useEffect, useRef, useCallback } = React;
 
-  /*
-   * 兼容模式防冲突核心：创建终端时 sessionId 传 undefined。
-   *
-   * useTerminalTabs 的 sessionId 为 undefined 时，POST /sessions 不带 sessionId
-   * 字段，宿主半 createSession 的 ownerSessionId 为 null——PTY session 完全由
-   * 本插件独立管理，不进入 DSH session 的 write handle 体系，从根源上消除与
-   * DSH-better-sidebar 终端的 session 冲突。
-   *
-   * 恢复终端时也用 undefined（恢复全部存活终端，不按会话过滤）——ownerSessionId
-   * 为 null 的终端不会被任何 sessionId 过滤到，所以按 sessionId 过滤会丢失终端。
-   * 切换工作区时已有终端的 cwd 不会变，但新建终端用当前 scope.cwd。
-   */
-
-  /** 创建终端用的 sessionId（undefined = 不绑定，防 write handle 冲突） */
-  const sessionId = undefined;
+  /** 当前工作区的 DSH 会话 id（用于按工作区过滤恢复 + 创建终端时绑定） */
+  const sessionId = scope.sessionId;
 
   /** 工作目录：从 tab 接收的 scope.cwd 取值（DSH-better-sidebar 传入工作区路径） */
   const workspaceCwd = scope.cwd;
@@ -303,8 +296,9 @@ function TerminalSidebarRightActions(props: TabComponentPropsLike): ReactElement
   const { scope } = props;
   const { useCallback } = React;
 
-  /* 工作目录与 content 组件一致（scope.cwd 由 DSH-better-sidebar 传入当前会话工作区） */
+  /* 工作目录与 sessionId 与 content 组件一致（scope 由 DSH-better-sidebar 传入当前会话） */
   const workspaceCwd = scope.cwd;
+  const sessionId = scope.sessionId;
 
   /* 只拉取配置（terminalProfiles），不持有终端 state */
   const { terminalProfiles } = useConfig(() => { /* 侧边栏模式不切换面板 */ });
@@ -345,15 +339,15 @@ function TerminalSidebarRightActions(props: TabComponentPropsLike): ReactElement
           className: 'dshTermNew',
           title: '新建终端',
           'aria-label': '新建终端',
-          onClick: () => { dispatchAction({ type: 'newTab', cwd: workspaceCwd }); },
+          onClick: () => { dispatchAction({ type: 'newTab', cwd: workspaceCwd, sessionId }); },
         },
         Plus12(),
       ),
       React.createElement('div', { className: 'dshTermNewSep' }),
       React.createElement(DropdownMenu, {
         busy: false,
-        onNewTerminal: () => { dispatchAction({ type: 'newTab', cwd: workspaceCwd }); },
-        onSplitTerminal: () => { dispatchAction({ type: 'splitTerminal', cwd: workspaceCwd }); },
+        onNewTerminal: () => { dispatchAction({ type: 'newTab', cwd: workspaceCwd, sessionId }); },
+        onSplitTerminal: () => { dispatchAction({ type: 'splitTerminal', cwd: workspaceCwd, sessionId }); },
         terminalProfiles,
         onNewByType: handleNewByType,
       }),
