@@ -54,6 +54,8 @@ import {
 } from './client/hooks.js';
 import { injectStyles } from './client/styles.js';
 import { TermPane, RestartButton } from './client/term-pane.js';
+import { renderTerminalGroups, findProfile, findActiveInstance, findActiveGroup } from './client/terminal-render.js';
+import type { TerminalRenderParams } from './client/terminal-render.js';
 import { TerminalSettingsCard } from './client/settings/card.js';
 import { injectSettingsStyles } from './client/settings/styles.js';
 import {
@@ -335,8 +337,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   const { state, dispatch } = useTerminalState(sessionId);
   const { instances, groups, activeInstanceId, busy, bootReady } = state;
 
-  const activeInstance = instances.find(t => t.id === activeInstanceId) ?? null;
-  const activeGroup = groups.find(g => g.instances.some(i => i.id === activeInstanceId)) ?? null;
+  const activeInstance = findActiveInstance(instances, activeInstanceId);
+  const activeGroup = findActiveGroup(groups, activeInstanceId);
 
   /* —— 终端 CRUD（新建/关闭/重启/拆分/退出标记） —— */
   const { newTab, closeTab, restartActive, splitTerminal, onExit } = useTerminalTabs({
@@ -385,11 +387,8 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
    * terminalProfiles 里找到该配置，调用宿主半的 POST /sessions 新建终端。
    */
   const handleNewByType = useCallback((profileId: string): void => {
-    const profile = terminalProfiles.find(p => p.id === profileId);
-    if (profile === undefined) {
-      log.warn(`未知的终端配置 id：${profileId}`);
-      return;
-    }
+    const profile = findProfile(terminalProfiles, profileId);
+    if (profile === undefined) return;
     void newTab(profile.id);
   }, [newTab, terminalProfiles]);
 
@@ -475,48 +474,14 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
           React.createElement(
             'div',
             { className: 'dshTermTerminalArea' },
-            /* 按组渲染终端实例 */
-            ...groups.map(g => {
-              if (g.instances.length === 1) {
-                /* 单实例组：直接渲染 */
-                const inst = g.instances[0];
-                return React.createElement(TermPane, {
-                  key: inst.id,
-                  instance: inst,
-                  active: inst.id === activeInstanceId,
-                  fontFamily,
-                  fontSize,
-                  lineHeight,
-                  onExit,
-                });
-              }
-              /* 多实例组：水平并排 */
-              return React.createElement(
-                'div',
-                { key: g.id, className: 'dshTermSplitGroup' },
-                ...g.instances.flatMap((inst, idx) => {
-                  const elements: ReactElement[] = [];
-                  if (idx > 0) {
-                    elements.push(React.createElement('div', { key: g.id + '-div-' + idx, className: 'dshTermSplitDivider' }));
-                  }
-                  elements.push(
-                    React.createElement(
-                      'div',
-                      { key: inst.id, className: 'dshTermSplitPane' },
-                      React.createElement(TermPane, {
-                        instance: inst,
-                        active: inst.id === activeInstanceId,
-                        fontFamily,
-                        fontSize,
-                        lineHeight,
-                        onExit,
-                      }),
-                    ),
-                  );
-                  return elements;
-                }),
-              );
-            }),
+            /* 按组渲染终端实例（共享渲染逻辑，与兼容模式共用） */
+            ...renderTerminalGroups(groups, {
+              activeInstanceId,
+              fontFamily,
+              fontSize,
+              lineHeight,
+              onExit,
+            } satisfies TerminalRenderParams),
             instances.length === 0
               ? React.createElement(
                 'div',
