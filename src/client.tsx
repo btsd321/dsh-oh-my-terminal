@@ -196,11 +196,14 @@ function registerStandaloneDock(ctx: ClientContext): () => void {
  */
 function registerSidebarTab(ctx: ClientContext, service: BetterSidebarServiceLike): void {
   try {
-    const descriptor = createTerminalTabDescriptor();
+    // 能力探测：DSH-better-sidebar v0.25.0+ 支持 rightActions（操作按钮注入 tab 栏右端）；
+    // 旧版本不支持时回退到内容区顶部两层显示方案（useHeader=true）
+    const supportsRightActions = service.features?.includes('rightActions') ?? false;
+    const descriptor = createTerminalTabDescriptor(supportsRightActions);
     const dispose = service.registerTab(descriptor);
     // 命令随插件销毁注销（registerTab 返回幂等 disposer）
     ctx.effect(() => dispose, 'dsh-oh-my-terminal.sidebar-tab');
-    log.info('已接入 DSH-better-sidebar 兼容模式（终端 tab 注册到底部工作台）');
+    log.info(`已接入 DSH-better-sidebar 兼容模式（终端 tab 注册到底部工作台，rightActions=${supportsRightActions}）`);
   } catch (error) {
     // 注册抛错（如 tab id 已被其他插件占用）→ 降级为独立模式
     const msg = error instanceof Error ? error.message : String(error);

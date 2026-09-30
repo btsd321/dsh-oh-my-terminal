@@ -61,12 +61,24 @@ export interface BetterSidebarTabDescriptorLike {
   single?: boolean;
   /** tab 内容渲染组件 */
   component: (props: TabComponentPropsLike) => ReactNode;
+  /**
+   * tab 栏右侧操作区（v0.25.0+）：tab 激活时，返回的 ReactNode 渲染在 tab 栏
+   * 右端（+ 按钮右侧、面板关闭按钮左侧，右对齐）。让 tab 把自己的工具栏直接
+   * 放进 tab 标签条，不在内容区顶部单独渲染头部行。
+   */
+  rightActions?: (props: TabComponentPropsLike) => ReactNode;
 }
 
 /** DSH-better-sidebar 注册服务的最小接口 */
 export interface BetterSidebarServiceLike {
   /** 注册一个 tab 类型，返回注销函数 */
   registerTab(descriptor: BetterSidebarTabDescriptorLike): () => void;
+  /**
+   * 能力列表（v0.12.0+）：单调递增，能力只增不删。消费方用 includes 探测
+   * 新能力是否可用，不可用时降级。本插件用 'rightActions' 探测 tab 栏
+   * 右侧操作注入是否可用，不可用时回退到内容区顶部两层显示方案。
+   */
+  readonly features?: readonly string[];
 }
 
 /** DSH-better-sidebar 发布到 cordis 上下文的服务名 */
