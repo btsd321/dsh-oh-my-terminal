@@ -141,20 +141,14 @@ function TerminalSidebarTab(props: TabComponentPropsLike): ReactElement {
   /*
    * 侧边栏 tab 布局：填满 DSH-better-sidebar 底部工作台的 tab 内容区。
    * 不渲染折叠 bar 与拖拽 grip（工作台自带展开/折叠与 resize）。
-   * 高度 100% 适配容器；内部用 flex 列布局：头部（固定高）+ Body（flex:1）。
+   * 使用 dshTermSidebarRoot 类（覆盖 dshTermRoot 的 position:fixed 等独立模式
+   * 定位），内部用 flex 列布局：头部（固定高）+ Body（flex:1）。
    */
   return React.createElement(
     'div',
     {
-      className: 'dshTermRoot dshTermSidebarRoot',
+      className: 'dshTermSidebarRoot',
       ref: rootRef,
-      style: {
-        width: '100%',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0,
-      },
     },
     /* 头部：引导符 + 状态 + 右侧按钮组 */
     React.createElement(
