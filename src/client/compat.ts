@@ -9,8 +9,10 @@
  *              底部面板，改为通过 `service.registerTab()` 注册"终端"tab 嵌入
  *              DSH-better-sidebar 的底部工作台。
  *
- *              兼容模式下的 PTY session 不绑定 DSH sessionId（ownerSessionId = null），
- *              完全由本插件独立管理，不进入 DSH session 的 write handle 体系——
+ *              兼容模式下 PTY session 绑定 scope.sessionId（ownerSessionId = scope.sessionId），
+ *              实现每个工作区有自己的终端组——切换工作区时只恢复该工作区的终端。
+ *              tab 模式不走 dock，不获取 DSH write handle，ownerSessionId 只是本插件
+ *              元数据（用于 GET /sessions 按工作区过滤），不进入 DSH write handle 体系——
  *              从根源上消除两个终端插件的 session 冲突。
  *
  *              软探测模式与 shortcuts 服务接入（shortcut-bridge.ts）一致：
