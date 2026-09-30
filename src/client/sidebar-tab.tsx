@@ -9,10 +9,13 @@
  *              （useTerminalState/useConfig/useTerminalTabs），但与独立模式的
  *              TerminalPanel 有三处关键差异：
  *
- *              1. 不绑定 DSH sessionId——`useTerminalState(undefined)` 与
- *                 `useTerminalTabs` 的 sessionId 传 undefined，PTY session 的
- *                 ownerSessionId 为 null，不进入 DSH session 的 write handle
- *                 管理体系，从根源上消除与 DSH-better-sidebar 终端的 session 冲突
+ *              1. 按 scope.sessionId 绑定 DSH 会话——useTerminalState 用
+ *                 scope.sessionId 按工作区过滤恢复终端，useTerminalTabs
+ *                 创建终端时绑定 ownerSessionId = scope.sessionId，实现
+ *                 "每个工作区有自己的终端组，切换时只看该工作区的终端"。
+ *                 tab 模式不走 dock，不获取 DSH write handle，ownerSessionId
+ *                 只是本插件元数据（用于 GET /sessions 按工作区过滤），
+ *                 不进入 DSH write handle 体系
  *              2. 工作目录从 tab 接收的 scope.cwd 取值（DSH-better-sidebar
  *                 传入当前工作区路径），而非 useWorkspaces 查询
  *              3. 操作按钮通过 descriptor.rightActions 注入 tab 栏右端（+ 按钮
@@ -39,9 +42,6 @@ import { DropdownMenu } from './dropdown.js';
 import { SideList, instanceLabel } from './side-list.js';
 import { TerminalGlyph14, Plus12 } from './icons.js';
 import type { TabComponentPropsLike, BetterSidebarTabDescriptorLike } from './compat.js';
-import { createLogger } from '../logger.js';
-
-const log = createLogger('terminal-sidebar-tab');
 
 /** 侧边栏终端 tab 在 + 菜单中的排序权重（排在内置 tab 之后） */
 const SIDEBAR_TAB_ORDER = 40;
