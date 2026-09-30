@@ -48,6 +48,8 @@
 3. merge 后立即删除本地特性分支
 4. 特性分支**不直接 merge 到 master**
 5. 特性分支之间**不互相 merge**——如有依赖，先合并上游分支到 develop，再从 develop rebase
+6. **所有日常操作从 `develop` 分支发起**——创建特性分支、pull 最新代码、日常提交均在 `develop` 或特性分支上进行，**不要在 `master` 上直接创建分支或提交**
+7. develop 合并到 master 后，**立即切回 `develop` 分支**继续工作，不要停留在 `master` 分支上
 
 ### 1.3 AI Agent 分支约定
 
@@ -70,6 +72,7 @@ develop (稳定) ──merge──→ master ──tag──→ v0.x.y
 3. 如需版本号变更，在 master 上修改 `package.json` 并提交
 4. `git tag -a v0.x.y -m "v0.x.y: <发布摘要>"`
 5. push master 和 tag
+6. **发布完成后立即 `git checkout develop` 回到日常开发分支**——master 仅用于发布合并，不要在 master 上停留或创建特性分支
 
 ---
 
@@ -193,7 +196,7 @@ AI agent 在本仓库执行代码变更时，按以下清单自检：
 ### 开始前
 
 - [ ] 确认当前在正确的特性分支上（不在 master/develop 上直接改）
-- [ ] 确认特性分支从 develop 最新 HEAD 创建
+- [ ] 确认特性分支从 develop 最新 HEAD 创建（不从 master 建分支）
 - [ ] 确认 Lead 分配的写作用户与其他 agent 不重叠
 
 ### 工作中
@@ -218,6 +221,8 @@ AI agent 在本仓库执行代码变更时，按以下清单自检：
 | 禁止操作 | 原因 |
 |---------|------|
 | 直接在 master/develop 上 commit | 所有改动必须经特性分支 |
+| 从 master 创建特性分支 | 特性分支只能从 develop 创建；master 仅用于发布合并 |
+| merge 到 master 后停留在 master 分支 | 发布完成后应立即切回 develop 继续开发 |
 | master → develop 的 merge | 破坏单向合并规则，产生混乱历史 |
 | 特性分支之间互相 merge | 应通过 develop 中转 |
 | force push 已推送的分支 | 除非 Lead 明确要求重写历史 |
