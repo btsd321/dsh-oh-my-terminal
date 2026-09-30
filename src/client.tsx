@@ -60,6 +60,9 @@ import {
   resetShortcutsState, markShortcutsActive,
   registerPanelToggler, notifyPanelToggle,
 } from './client/shortcut-bridge.js';
+import { detectBetterSidebar } from './client/compat.js';
+import type { BetterSidebarServiceLike } from './client/compat.js';
+import { createTerminalTabDescriptor } from './client/sidebar-tab.js';
 import { SHORTCUT_COMMAND_ID, SHORTCUT_DEFAULTS } from './constants.js';
 import { createLogger } from './logger.js';
 
@@ -116,14 +119,61 @@ export const inject = ['slots'];
  * DSH 设置界面统一配置）；旧宿主无 shortcuts 服务时软探测不命中，维持裸
  * keydown 降级路径。
  *
+ * **DSH-better-sidebar 兼容模式**：软探测 `ctx.betterSidebar` 服务，命中时
+ * 切换为兼容模式——不注册 `conversation.input.dock`（避免与 DSH-better-sidebar
+ * 底部工作台的终端竞争同一 DSH session 的 write handle），改为通过
+ * `service.registerTab()` 注册"终端"tab 嵌入 DSH-better-sidebar 底部工作台。
+ * 兼容模式下 PTY session 不绑定 DSH sessionId，从根源上消除 session 冲突。
+ *
  * @param ctx - 远端页面的 cordis 上下文
  */
 export function apply(ctx: ClientContext): void {
+  // 软探测 DSH-better-sidebar：命中时走兼容模式，未命中走独立模式
+  const betterSidebar = detectBetterSidebar(ctx);
+  if (betterSidebar !== undefined) {
+    registerSidebarTab(ctx, betterSidebar);
+    return;
+  }
+  // 独立模式：原有 conversation.input.dock + shortcuts 命令注册
   registerToggleShortcut(ctx);
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
     { name: 'conversation.input.dock', id: 'terminal', order: 10 },
     TerminalPanel,
   ));
+  registerSettingsPage(ctx);
+}
+
+/**
+ * 兼容模式：通过 DSH-better-sidebar 的 registerTab 注册"终端"tab。
+ *
+ * 不注册 conversation.input.dock（避免与底部工作台终端冲突），不注册
+ * shortcuts 命令（底部工作台有自己的展开/折叠控制）。PTY session 不绑定
+ * DSH sessionId（sidebar-tab 组件内 sessionId 传 undefined），不进入 DSH
+ * session 的 write handle 管理体系。
+ *
+ * 设置页仍正常注册（兼容模式下用户仍需配置终端种类/字体等）。
+ *
+ * @param ctx - 远端页面的 cordis 上下文
+ * @param service - DSH-better-sidebar 的 betterSidebar 服务实例
+ */
+function registerSidebarTab(ctx: ClientContext, service: BetterSidebarServiceLike): void {
+  try {
+    const descriptor = createTerminalTabDescriptor();
+    const dispose = service.registerTab(descriptor);
+    // 命令随插件销毁注销（registerTab 返回幂等 disposer）
+    ctx.effect(() => dispose, 'dsh-oh-my-terminal.sidebar-tab');
+    log.info('已接入 DSH-better-sidebar 兼容模式（终端 tab 注册到底部工作台）');
+  } catch (error) {
+    // 注册抛错（如 tab id 已被其他插件占用）→ 降级为独立模式
+    const msg = error instanceof Error ? error.message : String(error);
+    log.warn(`betterSidebar registerTab 失败，降级为独立模式：${msg}`);
+    registerToggleShortcut(ctx);
+    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
+      { name: 'conversation.input.dock', id: 'terminal', order: 10 },
+      TerminalPanel,
+    ));
+  }
+  // 设置页在兼容模式下仍注册（用户需配置终端种类/字体）
   registerSettingsPage(ctx);
 }
 

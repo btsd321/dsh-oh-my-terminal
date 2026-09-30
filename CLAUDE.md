@@ -65,6 +65,8 @@ src/
 │   ├── dropdown.tsx        # +号旁下拉菜单组件（新建/拆分/按种类新建）
 │   ├── side-list.tsx       # 右侧终端列表面板（树形前缀 + 右键重命名 + useMemo 缓存）
 │   ├── shortcut-bridge.ts  # shortcuts 服务接入信号桥（命令注册状态 + 面板切换回调，软探测兼容旧宿主）
+│   ├── compat.ts          # DSH-better-sidebar 兼容模式检测（软探测 ctx.betterSidebar + 服务最小接口声明）
+│   ├── sidebar-tab.tsx    # 侧边栏终端 tab 组件（兼容模式：嵌入 DSH-better-sidebar 底部工作台，不绑定 DSH sessionId）
 │   ├── terminal/
 │   │   ├── reducer.ts          # 终端状态 reducer（terminalReducer 纯函数 + createInitialState）
 │   │   ├── use-terminal-state.ts # 终端状态管理 Hook（useTerminalState：useReducer 封装 + 启动恢复）
@@ -117,9 +119,13 @@ src/
   client.tsx → client/types.ts, client/icons.tsx, client/clipboard.ts,
                client/dropdown.tsx, client/side-list.tsx, client/hooks.ts,
                client/styles.ts, client/term-pane.tsx, client/settings/,
-               client/shortcut-bridge.ts, logger.ts
+               client/shortcut-bridge.ts, client/compat.ts, client/sidebar-tab.tsx,
+               logger.ts
   client/hooks.ts → client/terminal/*（re-export 兼容壳：reducer/use-terminal-state/use-panel-geometry/use-tabs）
   client/shortcut-bridge.ts → client/types.ts, constants.ts, logger.ts
+  client/compat.ts → logger.ts（软探测 ctx.betterSidebar，声明服务最小接口）
+  client/sidebar-tab.tsx → client/hooks.ts, client/term-pane.tsx, client/dropdown.tsx,
+                           client/side-list.tsx, client/icons.tsx, client/compat.ts, logger.ts
   client/terminal/reducer.ts → client/types.ts, logger.ts
   client/terminal/use-terminal-state.ts → client/terminal/reducer.ts, client/types.ts, logger.ts
   client/terminal/use-panel-geometry.ts → client/types.ts, constants.ts, logger.ts
