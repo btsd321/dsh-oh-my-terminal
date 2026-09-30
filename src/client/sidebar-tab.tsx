@@ -382,7 +382,13 @@ export function createTerminalTabDescriptor(supportsRightActions: boolean): Bett
     single: true,
     component: (props) => React.createElement(TerminalSidebarTab, { ...props, useHeader: !supportsRightActions }),
     ...(supportsRightActions
-      ? { rightActions: (props: TabComponentPropsLike) => React.createElement(TerminalSidebarRightActions, props) }
+      ? {
+        // rightActions 签名是 (ctx, scope, state) => ReactNode（三个独立参数，
+        // 不是 props 对象——与 DSH-better-sidebar 的 TabDescriptor.rightActions
+        // 调用约定一致）。这里把它们组装成 TabComponentPropsLike 传给组件。
+        rightActions: (ctx: unknown, scope: { sessionId: string; cwd?: string }, _state: unknown) =>
+          React.createElement(TerminalSidebarRightActions, { ctx: ctx as TabComponentPropsLike['ctx'], scope, visible: true, tab: { id: '', type: '', title: '' } }),
+      }
       : {}),
   };
 }

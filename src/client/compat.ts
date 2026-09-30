@@ -65,8 +65,11 @@ export interface BetterSidebarTabDescriptorLike {
    * tab 栏右侧操作区（v0.25.0+）：tab 激活时，返回的 ReactNode 渲染在 tab 栏
    * 右端（+ 按钮右侧、面板关闭按钮左侧，右对齐）。让 tab 把自己的工具栏直接
    * 放进 tab 标签条，不在内容区顶部单独渲染头部行。
+   *
+   * 签名与 DSH-better-sidebar 的 TabDescriptor.rightActions 一致：
+   * `(ctx, scope, state) => ReactNode`，三个独立参数（不是 props 对象）。
    */
-  rightActions?: (props: TabComponentPropsLike) => ReactNode;
+  rightActions?: (ctx: unknown, scope: SessionScopeLike, state: unknown) => ReactNode;
 }
 
 /** DSH-better-sidebar 注册服务的最小接口 */
