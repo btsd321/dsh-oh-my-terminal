@@ -19,6 +19,11 @@
  *                 右侧、关闭按钮左侧），不在内容区顶部单独渲染头部行——
  *                 与 VSCode 风格一致，操作按钮直接在 tab 标签条上
  *
+ *              rightActions 与 content 是 DSH-better-sidebar 分别渲染的两个独立
+ *              挂载点，state 各自独立。为保持两者操作同步，rightActions 只渲染
+ *              按钮不持有 state，点击时通过 DOM 自定义事件通知 content 组件执行
+ *              实际操作（新建 / 拆分 / 重启），state 只在 content 组件维护。
+ *
  *              终端输入/输出数据绝不进日志。
  */
 
@@ -39,11 +44,23 @@ const log = createLogger('terminal-sidebar-tab');
 /** 侧边栏终端 tab 在 + 菜单中的排序权重（排在内置 tab 之后） */
 const SIDEBAR_TAB_ORDER = 40;
 
+/** DOM 自定义事件名：rightActions → content 的操作桥接 */
+const SIDEBAR_TAB_ACTION_EVENT = 'dsh-oh-my-terminal:action';
+
+/** rightActions 发给 content 的操作指令（携带 cwd 保证切换工作区后新建终端用新 cwd） */
+type SidebarTabAction =
+  | { type: 'newTab'; cwd?: string }
+  | { type: 'newTabByProfile'; profileId: string; cwd?: string }
+  | { type: 'splitTerminal'; cwd?: string }
+  | { type: 'restartActive' };
+
 /**
  * 侧边栏终端 tab 内容组件。
  *
  * 复用独立模式 TerminalPanel 的核心 hooks，但适配 DSH-better-sidebar 底部
  * 工作台的 tab 内容区布局，且不绑定 DSH sessionId（防 write handle 冲突）。
+ * 操作按钮通过 descriptor.rightActions 注入 tab 栏右端，不在内容区顶部
+ * 单独渲染头部行。rightActions 通过 DOM 自定义事件通知本组件执行操作。
  *
  * @param props - DSH-better-sidebar 注入的 tab 组件 props + useHeader 降级标记
  * @returns 终端 tab 内容根元素
@@ -53,14 +70,19 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
   const { useEffect, useRef, useCallback } = React;
 
   /*
-   * 兼容模式防冲突核心：sessionId 传 undefined。
+   * 兼容模式防冲突核心：创建终端时 sessionId 传 undefined。
    *
-   * useTerminalState(undefined)：/sessions 恢复时不按 DSH 会话过滤（恢复全部
-   * 存活终端）；useTerminalTabs 的 sessionId 为 undefined 时，POST /sessions
-   * 不带 sessionId 字段，宿主半 createSession 的 ownerSessionId 为 null——
-   * PTY session 完全由本插件独立管理，不进入 DSH session 的 write handle
-   * 体系，从根源上消除与 DSH-better-sidebar 终端的 session 冲突。
+   * useTerminalTabs 的 sessionId 为 undefined 时，POST /sessions 不带 sessionId
+   * 字段，宿主半 createSession 的 ownerSessionId 为 null——PTY session 完全由
+   * 本插件独立管理，不进入 DSH session 的 write handle 体系，从根源上消除与
+   * DSH-better-sidebar 终端的 session 冲突。
+   *
+   * 恢复终端时也用 undefined（恢复全部存活终端，不按会话过滤）——ownerSessionId
+   * 为 null 的终端不会被任何 sessionId 过滤到，所以按 sessionId 过滤会丢失终端。
+   * 切换工作区时已有终端的 cwd 不会变，但新建终端用当前 scope.cwd。
    */
+
+  /** 创建终端用的 sessionId（undefined = 不绑定，防 write handle 冲突） */
   const sessionId = undefined;
 
   /** 工作目录：从 tab 接收的 scope.cwd 取值（DSH-better-sidebar 传入工作区路径） */
@@ -69,7 +91,7 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
   /** 根元素 ref */
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  /* —— 统一状态管理（useReducer 封装 + 不按会话过滤恢复） —— */
+  /* —— 统一状态管理（useReducer 封装 + 恢复全部终端） —— */
   const { state, dispatch } = useTerminalState(sessionId);
   const { instances, groups, activeInstanceId, busy, bootReady } = state;
 
@@ -90,27 +112,6 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
     () => { /* 侧边栏模式下快捷键不切换面板 */ },
   );
 
-  /** 首次可见已处理标记（只在首次可见时创建终端，避免每次切 tab 都新建） */
-  const openHandled = useRef(false);
-
-  /* 首次可见且无恢复的终端：创建一个会话。tab 切换隐藏→显示时不重复创建 */
-  useEffect(() => {
-    if (!visible) {
-      openHandled.current = false;
-      return;
-    }
-    if (!bootReady || instances.length > 0 || openHandled.current) return;
-    openHandled.current = true;
-    void newTab();
-  }, [visible, bootReady, instances.length, newTab]);
-
-  /** 状态标签（降级模式下头部栏显示） */
-  const stateLabel = busy
-    ? '启动中…'
-    : activeInstance === null
-      ? (instances.length === 0 ? '无会话' : '空闲')
-      : (activeInstance.exited ? instanceLabel(activeInstance) + ' 已退出，点 ⟳ 重启' : instanceLabel(activeInstance));
-
   /**
    * 按配置 id 新建终端。
    *
@@ -126,6 +127,54 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
     void newTab(profile.id);
   }, [newTab, terminalProfiles]);
 
+  /** 首次可见已处理标记（只在首次可见时创建终端，避免每次切 tab 都新建） */
+  const openHandled = useRef(false);
+
+  /* 首次可见且无恢复的终端：创建一个会话。tab 切换隐藏→显示时不重复创建 */
+  useEffect(() => {
+    if (!visible) {
+      openHandled.current = false;
+      return;
+    }
+    if (!bootReady || instances.length > 0 || openHandled.current) return;
+    openHandled.current = true;
+    void newTab();
+  }, [visible, bootReady, instances.length, newTab]);
+
+  /*
+   * rightActions → content 操作桥接：监听 DOM 自定义事件。
+   *
+   * rightActions 组件不持有 state（与 content 各自独立挂载，state 不同步），
+   * 点击操作按钮时发送 SIDEBAR_TAB_ACTION_EVENT 事件，content 组件监听并
+   * 执行实际操作（newTab/splitTerminal/restartActive），保证 state 一致。
+   *
+   * rightActions 和 content 是 DSH-better-sidebar 分别渲染的独立挂载点，
+   * 没有共同的 DOM 祖先（rightActions 在 tab 栏、content 在面板内容区），
+   * 所以用 document 作为事件总线（document.dispatchEvent + document.addEventListener）。
+   */
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const detail = (e as CustomEvent<SidebarTabAction>).detail;
+      if (detail === undefined) return;
+      switch (detail.type) {
+        case 'newTab':
+          void newTab(undefined, undefined, detail.cwd);
+          break;
+        case 'newTabByProfile':
+          void newTab(detail.profileId, undefined, detail.cwd);
+          break;
+        case 'splitTerminal':
+          void splitTerminal(undefined, undefined, detail.cwd);
+          break;
+        case 'restartActive':
+          void restartActive();
+          break;
+      }
+    };
+    document.addEventListener(SIDEBAR_TAB_ACTION_EVENT, handler);
+    return () => { document.removeEventListener(SIDEBAR_TAB_ACTION_EVENT, handler); };
+  }, [newTab, splitTerminal, restartActive]);
+
   /** 重命名终端实例 */
   const handleRename = useCallback((instanceId: string, newName: string): void => {
     dispatch({ type: 'RENAME_INSTANCE', id: instanceId, title: newName });
@@ -135,6 +184,13 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
   const handleSelectInstance = useCallback((instanceId: string): void => {
     dispatch({ type: 'SET_ACTIVE', id: instanceId });
   }, [dispatch]);
+
+  /** 状态标签（降级模式下头部栏显示） */
+  const stateLabel = busy
+    ? '启动中…'
+    : activeInstance === null
+      ? (instances.length === 0 ? '无会话' : '空闲')
+      : (activeInstance.exited ? instanceLabel(activeInstance) + ' 已退出，点 ⟳ 重启' : instanceLabel(activeInstance));
 
   /*
    * 侧边栏 tab 布局：填满 DSH-better-sidebar 底部工作台的 tab 内容区。
@@ -269,38 +325,34 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
  * 右侧、关闭按钮左侧，右对齐）。渲染新建终端组合按钮（+ / 下拉）+ 重启按钮，
  * 与 VSCode 风格一致——操作按钮直接在 tab 标签条上，不在内容区单独渲染头部。
  *
- * 复用与 TerminalSidebarTab 相同的 hooks，保持操作与内容区状态同步。
+ * 本组件不持有终端 state——与 content 组件各自独立挂载，state 不同步。
+ * 点击操作按钮时通过 DOM 自定义事件通知 content 组件执行实际操作，
+ * 保证 state 只在 content 组件维护，操作结果立即可见。
  *
  * @param props - DSH-better-sidebar 注入的 tab 组件 props
  * @returns tab 栏右侧操作区根元素
  */
 function TerminalSidebarRightActions(props: TabComponentPropsLike): ReactElement {
-  const { scope, visible } = props;
+  const { scope } = props;
   const { useCallback } = React;
 
-  /* 与 TerminalSidebarTab 完全相同的 hooks 调用——rightActions 与 component
-   * 是同一 descriptor 的两个渲染面，各自独立挂载（DSH-better-sidebar 分别
-   * 渲染它们），所以 hooks 状态各自独立。但这不会造成问题：两者都从同一
-   * /sessions 恢复同一批终端（ownerSessionId=null 的全局终端），操作的是
-   * 同一批宿主半 PTY 会话。rightActions 里的按钮触发 HTTP CRUD，内容区
-   * 通过 WebSocket 实时感知变化（newTab/closeTab/restart 的 HTTP 响应更新
-   * 内容区 state，WebSocket onExit 同步退出状态）。 */
-  const sessionId = undefined;
+  /* 工作目录与 content 组件一致（scope.cwd 由 DSH-better-sidebar 传入当前会话工作区） */
   const workspaceCwd = scope.cwd;
 
-  const { state, dispatch } = useTerminalState(sessionId);
-  const { instances, activeInstanceId, busy } = state;
-
-  const activeInstance = instances.find(t => t.id === activeInstanceId) ?? null;
-  const activeGroup = state.groups.find(g => g.instances.some(i => i.id === activeInstanceId)) ?? null;
-
-  const { newTab, restartActive, splitTerminal } = useTerminalTabs({
-    state, dispatch,
-    activeInstance, activeGroup,
-    workspaceCwd, sessionId,
-  });
-
+  /* 只拉取配置（terminalProfiles），不持有终端 state */
   const { terminalProfiles } = useConfig(() => { /* 侧边栏模式不切换面板 */ });
+
+  /**
+   * 发送操作事件给 content 组件。
+   *
+   * rightActions 不持有 state，点击按钮时通过 DOM 自定义事件通知 content
+   * 组件执行实际操作（新建 / 拆分 / 重启），保证 state 一致。
+   */
+  const dispatchAction = useCallback((action: SidebarTabAction): void => {
+    document.dispatchEvent(
+      new CustomEvent(SIDEBAR_TAB_ACTION_EVENT, { detail: action, bubbles: true }),
+    );
+  }, []);
 
   const handleNewByType = useCallback((profileId: string): void => {
     const profile = terminalProfiles.find(p => p.id === profileId);
@@ -308,8 +360,8 @@ function TerminalSidebarRightActions(props: TabComponentPropsLike): ReactElement
       log.warn(`未知的终端配置 id：${profileId}`);
       return;
     }
-    void newTab(profile.id);
-  }, [newTab, terminalProfiles]);
+    dispatchAction({ type: 'newTabByProfile', profileId: profile.id });
+  }, [dispatchAction, terminalProfiles]);
 
   /*
    * rightActions 容器：DSH-better-sidebar 的 .tabBarRightActions 已提供
@@ -329,22 +381,25 @@ function TerminalSidebarRightActions(props: TabComponentPropsLike): ReactElement
           className: 'dshTermNew',
           title: '新建终端',
           'aria-label': '新建终端',
-          disabled: busy,
-          onClick: () => { void newTab(); },
+          onClick: () => { dispatchAction({ type: 'newTab', cwd: workspaceCwd }); },
         },
         Plus12(),
       ),
       React.createElement('div', { className: 'dshTermNewSep' }),
       React.createElement(DropdownMenu, {
-        busy,
-        onNewTerminal: () => { void newTab(); },
-        onSplitTerminal: () => { void splitTerminal(); },
+        busy: false,
+        onNewTerminal: () => { dispatchAction({ type: 'newTab', cwd: workspaceCwd }); },
+        onSplitTerminal: () => { dispatchAction({ type: 'splitTerminal', cwd: workspaceCwd }); },
         terminalProfiles,
         onNewByType: handleNewByType,
       }),
     ),
     /* 重启按钮 */
-    React.createElement(RestartButton, { active: activeInstance, busy, onRestart: () => { void restartActive(); } }),
+    React.createElement(RestartButton, {
+      active: null,
+      busy: false,
+      onRestart: () => { dispatchAction({ type: 'restartActive' }); },
+    }),
   );
 }
 
