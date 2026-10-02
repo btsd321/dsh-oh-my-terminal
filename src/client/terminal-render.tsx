@@ -11,6 +11,7 @@
 import * as React from 'react';
 import type { ReactElement } from 'react';
 import { TermPane } from './term-pane.js';
+import { SplitGroup } from './split-group.js';
 import type { TerminalGroup, TerminalInstance } from './types.js';
 import type { TerminalProfile } from './types.js';
 import { createLogger } from '../logger.js';
@@ -59,33 +60,16 @@ export function renderTerminalGroups(
         onExit,
       });
     }
-    /* 多实例组：水平并排 */
-    return React.createElement(
-      'div',
-      { key: g.id, className: 'dshTermSplitGroup' },
-      ...g.instances.flatMap((inst, idx) => {
-        const elements: ReactElement[] = [];
-        if (idx > 0) {
-          elements.push(React.createElement('div', { key: g.id + '-div-' + idx, className: 'dshTermSplitDivider' }));
-        }
-        elements.push(
-          React.createElement(
-            'div',
-            { key: inst.id, className: 'dshTermSplitPane' },
-            React.createElement(TermPane, {
-              instance: inst,
-              active: inst.id === activeInstanceId,
-              alwaysVisible: true,
-              fontFamily,
-              fontSize,
-              lineHeight,
-              onExit,
-            }),
-          ),
-        );
-        return elements;
-      }),
-    );
+    /* 多实例组：用 SplitGroup（SplitView + Sash 拖拽）管理 pane 尺寸 */
+    return React.createElement(SplitGroup, {
+      key: g.id,
+      instances: g.instances,
+      activeInstanceId,
+      fontFamily,
+      fontSize,
+      lineHeight,
+      onExit,
+    });
   });
 }
 
