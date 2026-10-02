@@ -68,6 +68,9 @@ src/
 │   ├── compat.ts          # DSH-better-sidebar 兼容模式检测（软探测 ctx.betterSidebar + 服务最小接口声明）
 │   ├── sidebar-tab.tsx    # 侧边栏终端 tab 组件（兼容模式：嵌入 DSH-better-sidebar 底部工作台，不绑定 DSH sessionId）
 │   ├── terminal-render.tsx # 终端组渲染共享函数（renderTerminalGroups + findProfile + findActiveInstance/Group，独立模式与兼容模式共用）
+│   ├── sash.ts             # 拖拽分隔条组件（复刻 VSCode Sash：mousedown→全局 mousemove/mouseup 事件 + cursor 注入 + iframe 禁用 + hover 延迟 + 双击重置）
+│   ├── split-view.ts       # 拆分布局管理器（复刻 VSCode SplitView：resize delta 分配算法 + layout 比例分配 + proportions 快照 + sash 启用状态计算）
+│   ├── split-group.tsx     # 拆分组 React 组件（用 SplitView 管理 pane 绝对定位 + Sash 拖拽，通过 react-dom createPortal 把 TermPane 渲染到 SplitView 的 view.element div）
 │   ├── terminal/
 │   │   ├── reducer.ts          # 终端状态 reducer（terminalReducer 纯函数 + createInitialState）
 │   │   ├── use-terminal-state.ts # 终端状态管理 Hook（useTerminalState：useReducer 封装 + 启动恢复）
@@ -139,6 +142,10 @@ src/
   client/settings/profile-row.tsx → client/settings/types.ts
   client/settings/profile-add-form.tsx → client/settings/types.ts
   client/settings/api.ts → client/settings/types.ts
+  client/terminal-render.tsx → client/term-pane.tsx, client/split-group.tsx, client/types.ts, logger.ts
+  client/sash.ts → logger.ts（Disposable/Emitter/IDisposable 最小适配层 + Sash 类）
+  client/split-view.ts → client/sash.ts, logger.ts（SplitView 类，实现 IVerticalSashLayoutProvider）
+  client/split-group.tsx → client/split-view.ts, client/term-pane.tsx, client/types.ts, client/styles.ts, react-dom
   client/dropdown.tsx → client/types.ts, client/icons.tsx
   client/side-list.tsx → client/types.ts, client/icons.tsx
   client/term-pane.tsx → client/types.ts, client/clipboard.ts, client/icons.tsx, client/styles.ts
