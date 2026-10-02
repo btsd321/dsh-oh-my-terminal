@@ -139,17 +139,14 @@ export function apply(ctx: ClientContext): void {
   // 设置页始终注册（两种模式用户都需配置终端种类/字体等）
   registerSettingsPage(ctx);
 
-  // 全局拦截 DSH 宿主终端快捷键（Ctrl+`，无 Shift）——hideHostTerminal 开启时，
-  // 通过注册 fixed 快捷键命令与 terminal.new 的 Ctrl+` 绑定冲突，使其从 bindings
-  // 移入 conflicts，dispatch 时返回 blocked 不执行。同时通过 observeFixedInput
-  // 监听 fixed input，触发时打开我们的终端。
+  // 全局拦截 DSH 宿主终端快捷键——通过注册 fixed 命令与 terminal.new 冲突。
+  // 用 ctx.inject 等待 shortcuts 服务可用（服务可能在插件 apply 之后才注册）。
   // 桌面端 DSH 用 native keyboard bridge 处理快捷键（绕过 DOM keydown），所以
   // DOM keydown 拦截无效，必须用 shortcuts 系统的 fixed 命令机制。
-  ctx.effect(() => {
-    const service = typeof ctx.get === 'function' ? ctx.get('shortcuts') : undefined;
-    if (service === undefined || typeof (service as Shortcuts).registerFixed !== 'function') {
-      return () => {};
-    }
+  let interceptCleanup: () => void = () => {};
+  const interceptSeat = ctx.inject(['shortcuts'], (injected: Context) => {
+    const service = typeof injected.get === 'function' ? injected.get('shortcuts') : undefined;
+    if (service === undefined || typeof (service as Shortcuts).registerFixed !== 'function') return;
     const shortcuts = service as Shortcuts;
 
     /* DSH 宿主终端命令的 id——从 catalog 读取它的当前绑定（用户可能改过键），
@@ -215,7 +212,7 @@ export function apply(ctx: ClientContext): void {
         /* 打开我们的终端 */
         const betterSidebar = getBetterSidebarService();
         if (betterSidebar?.openTab !== undefined) {
-          betterSidebar.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal' });
+          betterSidebar.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal', target: 'bottom' });
         } else {
           notifyPanelToggle();
         }
@@ -226,12 +223,13 @@ export function apply(ctx: ClientContext): void {
     register();
     const unsubCatalog = shortcuts.catalog.subscribe(() => { register(); });
 
-    return () => {
+    interceptCleanup = () => {
       unsubCatalog();
       fixedDispose?.();
       observeDispose?.();
     };
-  }, 'dsh-oh-my-terminal.host-terminal-intercept');
+  });
+  ctx.effect(() => () => { void interceptSeat.dispose(); interceptCleanup(); }, 'dsh-oh-my-terminal.host-terminal-intercept');
 
   // 即时探测：DSH-better-sidebar 先激活时直接走兼容模式
   const betterSidebar = detectBetterSidebar(ctx);
@@ -303,7 +301,6 @@ let _hideHostTerminal = true;
 /** 内部设置器（TerminalPanel/TerminalSidebarTab 的 useConfig effect 调用） */
 export function setHideHostTerminal(value: boolean): void {
   _hideHostTerminal = value;
-  log.info('setHideHostTerminal', { value });
 }
 
 /**
