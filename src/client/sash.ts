@@ -271,8 +271,8 @@ export class Sash extends Disposable {
   }
 }
 
-/** sash 默认宽度（像素）——1px 可见分隔线，hover 时用 CSS 伪元素扩展命中区域（参考 VSCode 默认 4px） */
-const SASH_GLOBAL_SIZE = 1;
+/** sash 默认宽度（像素）——2px 可见分隔线，hover 时用 CSS 伪元素扩展命中区域 */
+const SASH_GLOBAL_SIZE = 2;
 
 // —— 最小化的 Emitter / addDisposableListener 适配层 ——
 // （避免引入 VSCode 的完整 lifecycle/event 模块；这里只复刻 Sash 需要的最小接口）

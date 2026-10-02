@@ -19,9 +19,6 @@ import { SplitView, type IView } from './split-view.js';
 import { TermPane } from './term-pane.js';
 import type { TerminalInstance } from './types.js';
 import { SPLIT_PANE_MIN_WIDTH } from './styles.js';
-import { createLogger } from '../logger.js';
-
-const log = createLogger('split-group');
 
 /** SplitGroup 的 props（与 renderTerminalGroups 的多实例组参数一致） */
 export interface SplitGroupProps {
