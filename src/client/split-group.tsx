@@ -121,9 +121,13 @@ export function SplitGroup(props: SplitGroupProps): ReactElement {
           minimumSize: SPLIT_PANE_MIN_WIDTH,
           maximumSize: Number.POSITIVE_INFINITY,
           onDidChange: () => ({ dispose: () => {} }),
-          layout: (_size: number, _offset: number) => {
-            /* SplitView 分配尺寸后调用——pane 尺寸已通过 container.style.width 设置，
-             * TermPane 内的 ResizeObserver 会检测到尺寸变化并 fit */
+          layout: (size: number, _offset: number) => {
+            /* SplitView 分配尺寸后调用——设 width 触发 host div 的尺寸变化，
+             * 让 TermPane 的 ResizeObserver 检测到并 fit。host div 的 CSS
+             * position:absolute;inset:0 已撑满父容器，设 width 与 inset:0 的
+             * right:0 效果一致（父容器 width 也是 size），但显式设 width 确保
+             * ResizeObserver 收到尺寸变化通知 */
+            element.style.width = `${size}px`;
           },
         };
 

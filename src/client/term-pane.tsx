@@ -107,11 +107,17 @@ export function TermPane(props: TermPaneProps): ReactElement {
       window.open(uri, '_blank', 'noopener,noreferrer');
     }));
     term.open(host);
-    requestAnimationFrame(() => {
+    /* 初始 fit 用 rAF 延迟一帧——但拆分组场景下 SplitView 的 layoutViews() 可能
+     * 还未执行，容器尺寸为 0，fit 被零尺寸守卫跳过。ResizeObserver 会在容器
+     * 获得尺寸时重新触发 fit。 */
+    const fitNow = (): void => {
       try {
-        fit.fit();
+        if (host.clientWidth > 0 && host.clientHeight > 0) {
+          fit.fit();
+        }
       } catch { /* 零尺寸守卫 */ }
-    });
+    };
+    requestAnimationFrame(fitNow);
     termRef.current = term;
     fitRef.current = fit;
 
