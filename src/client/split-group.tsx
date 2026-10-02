@@ -70,8 +70,11 @@ export function SplitGroup(props: SplitGroupProps): ReactElement {
     const sv = new SplitView(container);
     splitViewRef.current = sv;
 
-    /* 初始布局：用容器宽度 */
-    sv.layout(container.offsetWidth);
+    /* 初始布局：用 rAF 延迟一帧确保容器尺寸已就绪（兼容模式 tab 切换时容器
+     * 挂载后可能还没完成 flex 布局，直接读 offsetWidth 可能得到 0） */
+    const raf = requestAnimationFrame(() => {
+      sv.layout(container.offsetWidth);
+    });
 
     /* 容器 resize 时重新布局 */
     const ro = new ResizeObserver(() => {
@@ -80,6 +83,7 @@ export function SplitGroup(props: SplitGroupProps): ReactElement {
     ro.observe(container);
 
     return () => {
+      cancelAnimationFrame(raf);
       ro.disconnect();
       sv.dispose();
       splitViewRef.current = null;
@@ -170,6 +174,6 @@ export function SplitGroup(props: SplitGroupProps): ReactElement {
   return React.createElement('div', {
     ref: containerRef,
     className: 'dshTermSplitGroupContainer',
-    style: { position: 'relative', width: '100%', height: '100%', overflow: 'hidden' },
+    style: { position: 'absolute', inset: 0, overflow: 'hidden' },
   }, ...portals);
 }

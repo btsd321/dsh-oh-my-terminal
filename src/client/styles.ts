@@ -169,7 +169,7 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
  * 不用 display:none 切换，只有组级别的 setVisible 才用 display:none） */
 .dshTermSplitPane > .dshTermPane{display:block}
 /* SplitView（复刻 VSCode SplitView）——绝对定位 pane + Sash 拖拽分隔条 */
-.dshTermSplitGroupContainer{position:relative;width:100%;height:100%;overflow:hidden}
+.dshTermSplitGroupContainer{position:absolute;inset:0;overflow:hidden}
 .dshTermSplitView{position:relative;width:100%;height:100%}
 .dshTermSplitViewContainer{position:relative;width:100%;height:100%;overflow:hidden}
 .dshTermSplitViewView{position:absolute;top:0;height:100%;overflow:hidden}
