@@ -68,6 +68,9 @@ src/
 │   ├── compat.ts          # DSH-better-sidebar 兼容模式检测（软探测 ctx.betterSidebar + 服务最小接口声明）
 │   ├── sidebar-tab.tsx    # 侧边栏终端 tab 组件（兼容模式：嵌入 DSH-better-sidebar 底部工作台，不绑定 DSH sessionId）
 │   ├── terminal-render.tsx # 终端组渲染共享函数（renderTerminalGroups + findProfile + findActiveInstance/Group，独立模式与兼容模式共用）
+│   ├── sash.ts             # 拖拽分隔条组件（复刻 VSCode Sash：mousedown→全局 mousemove/mouseup 事件 + cursor 注入 + iframe 禁用 + hover 延迟 + 双击重置）
+│   ├── split-view.ts       # 拆分布局管理器（复刻 VSCode SplitView：resize delta 分配算法 + layout 比例分配 + proportions 快照 + sash 启用状态计算）
+│   ├── split-group.tsx     # 拆分组 React 组件（用 SplitView 管理 pane 绝对定位 + Sash 拖拽，通过 react-dom createPortal 把 TermPane 渲染到 SplitView 的 view.element div）
 │   ├── terminal/
 │   │   ├── reducer.ts          # 终端状态 reducer（terminalReducer 纯函数 + createInitialState）
 │   │   ├── use-terminal-state.ts # 终端状态管理 Hook（useTerminalState：useReducer 封装 + 启动恢复）
@@ -128,7 +131,8 @@ src/
   client/shortcut-bridge.ts → client/types.ts, constants.ts, logger.ts
   client/compat.ts → logger.ts（软探测 ctx.betterSidebar，声明服务最小接口）
   client/sidebar-tab.tsx → client/hooks.ts, client/term-pane.tsx, client/dropdown.tsx,
-                           client/side-list.tsx, client/icons.tsx, client/compat.ts, logger.ts
+                           client/side-list.tsx, client/icons.tsx, client/compat.ts,
+                           client.tsx（setHideHostTerminal）, logger.ts
   client/terminal/reducer.ts → client/types.ts, logger.ts
   client/terminal/use-terminal-state.ts → client/terminal/reducer.ts, client/types.ts, logger.ts
   client/terminal/use-panel-geometry.ts → client/types.ts, constants.ts, logger.ts
@@ -139,6 +143,10 @@ src/
   client/settings/profile-row.tsx → client/settings/types.ts
   client/settings/profile-add-form.tsx → client/settings/types.ts
   client/settings/api.ts → client/settings/types.ts
+  client/terminal-render.tsx → client/term-pane.tsx, client/split-group.tsx, client/types.ts, logger.ts
+  client/sash.ts → logger.ts（Disposable/Emitter/IDisposable 最小适配层 + Sash 类）
+  client/split-view.ts → client/sash.ts, logger.ts（SplitView 类，实现 IVerticalSashLayoutProvider）
+  client/split-group.tsx → client/split-view.ts, client/term-pane.tsx, client/types.ts, client/styles.ts, react-dom
   client/dropdown.tsx → client/types.ts, client/icons.tsx
   client/side-list.tsx → client/types.ts, client/icons.tsx
   client/term-pane.tsx → client/types.ts, client/clipboard.ts, client/icons.tsx, client/styles.ts
@@ -187,6 +195,7 @@ src/
 - **Windows 上 spawn 必须给完整路径**：node-pty 的 `spawn` 在 Windows 上**不做 PATH/PATHEXT 查找**，传裸命令名（`pwsh`、`cmd`、`bash`）直接以 `File not found: ` 失败（错误消息里的路径是空串，极易误判为 cwd 问题）。所有终端命令都要先经 `where`/`which` 解析成绝对路径，并过滤 `WindowsApps` 下的 App Execution Alias 占位符
 - **跨半字段名必须逐字对齐**：宿主半与浏览器半经 HTTP 通信、无编译期校验，字段名拼写不一致会静默回落到默认分支（曾因客户端发 `terminalType`、宿主半读 `profileId`，导致下拉菜单选了任何类型都开出默认 shell，且无任何报错）
 - **单文件行数阈值**：建议 <600 行。超过时按职责边界拆分到子模块，不要按"太长了"随意切半
+- **DSH 宿主终端快捷键拦截**：DSH 桌面端用 **native keyboard bridge** 处理快捷键——快捷键通过 Electron 原生层截获，经 IPC 发给 renderer 的 `installNativeKeyboard`，直接调用 `registry.dispatch`，**完全绕过 DOM keydown 事件**。因此 `window.addEventListener('keydown', ...)` 拦截器在桌面端无效。必须用 DSH shortcuts 系统的 **fixed 命令机制**：注册与 `terminal.new` 相同绑定的 fixed 命令，使其从 `bindings`（生效）移入 `conflicts`（阻塞），dispatch 时返回 `blocked` 不执行；同时通过 `observeFixedInput` 监听 fixed input 触发打开我们的终端。用户可能在 DSH 设置里改过 `terminal.new` 的绑定，必须从 `shortcuts.catalog` 动态读取当前绑定而非硬编码。`shortcuts` 服务可能在插件 `apply` 之后才注册，必须用 `ctx.inject(['shortcuts'], ...)` 等待而非 `ctx.get` 即时探测。兼容模式下 `openTab` 需设 `target: 'bottom'` 才能打开到底部工作台而非右侧边栏（DSH-better-sidebar 默认在有 native surface 时打开到右侧边栏）
 
 ## 约束
 

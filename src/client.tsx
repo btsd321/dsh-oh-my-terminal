@@ -39,7 +39,7 @@ import type { ReactElement } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
 // import type：构建期擦除，浏览器 bundle 不携带对官方包的运行时引用——
 // shortcuts 服务实例由宿主运行期提供，插件只消费其方法与类型
-import type { Shortcuts, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client';
+import type { Shortcuts, ShortcutCommandId, ShortcutBinding } from '@deepseek-ai/dsh-client-shortcuts/client';
 // 子模块导入——esbuild 打包浏览器 bundle 时内联进 client.js
 import {
   TerminalGlyph14, TerminalGlyph12,
@@ -139,6 +139,98 @@ export function apply(ctx: ClientContext): void {
   // 设置页始终注册（两种模式用户都需配置终端种类/字体等）
   registerSettingsPage(ctx);
 
+  // 全局拦截 DSH 宿主终端快捷键——通过注册 fixed 命令与 terminal.new 冲突。
+  // 用 ctx.inject 等待 shortcuts 服务可用（服务可能在插件 apply 之后才注册）。
+  // 桌面端 DSH 用 native keyboard bridge 处理快捷键（绕过 DOM keydown），所以
+  // DOM keydown 拦截无效，必须用 shortcuts 系统的 fixed 命令机制。
+  let interceptCleanup: () => void = () => {};
+  const interceptSeat = ctx.inject(['shortcuts'], (injected: Context) => {
+    const service = typeof injected.get === 'function' ? injected.get('shortcuts') : undefined;
+    if (service === undefined || typeof (service as Shortcuts).registerFixed !== 'function') return;
+    const shortcuts = service as Shortcuts;
+
+    /* DSH 宿主终端命令的 id——从 catalog 读取它的当前绑定（用户可能改过键），
+     * 然后用相同绑定注册 fixed 命令使其冲突阻塞。用户改键时重新注册。 */
+    const HOST_TERMINAL_CMD = 'terminal.new' as ShortcutCommandId;
+
+    /** 从 catalog 读取 terminal.new 的当前绑定，转为 ShortcutBinding */
+    const readHostBinding = (): ShortcutBinding | null => {
+      const rows = shortcuts.catalog.getSnapshot();
+      const row = rows.find((r) => r.id === HOST_TERMINAL_CMD);
+      if (row === undefined || row.binding === null) return null;
+      return { code: row.binding.code, ...(row.binding.secondCode !== undefined ? { secondCode: row.binding.secondCode } : {}), modifiers: row.binding.modifiers };
+    };
+
+    /** 当前已注册的 fixed 命令 disposer + 对应的绑定（检测变化时重新注册） */
+    let fixedDispose: (() => void) | undefined;
+    let currentBinding: ShortcutBinding | null = null;
+    /** 当前已注册的 observeFixedInput disposer（绑定变化时重新注册） */
+    let observeDispose: (() => void) | undefined;
+
+    /** 注册/重新注册 fixed 命令 + observeFixedInput */
+    const register = (): void => {
+      const binding = readHostBinding();
+      if (binding === null) return;
+      /* 绑定未变化时不重复注册 */
+      if (currentBinding !== null && currentBinding.code === binding.code && currentBinding.secondCode === binding.secondCode && currentBinding.modifiers.join('+') === binding.modifiers.join('+')) return;
+      /* 注销旧的 */
+      fixedDispose?.();
+      observeDispose?.();
+      currentBinding = binding;
+
+      /* 注册 fixed 命令占用相同绑定，与 terminal.new 冲突 */
+      try {
+        fixedDispose = shortcuts.registerFixed({
+          id: 'terminal-panel.host-intercept' as ShortcutCommandId,
+          label: () => '打开终端（拦截宿主终端）',
+          keys: [binding.modifiers.map((m) => m.charAt(0).toUpperCase() + m.slice(1)).join('+') + '+' + binding.code],
+          group: 'application',
+          bindings: [binding],
+        });
+      } catch {
+        /* 命令已注册（插件重载）——忽略，旧 disposer 会清理 */
+        fixedDispose = undefined;
+        return;
+      }
+
+      /* 监听 fixed input——绑定键触发时打开我们的终端 */
+      observeDispose = shortcuts.observeFixedInput((input) => {
+        if (!_hideHostTerminal) return;
+        if (input.type !== 'keydown') return;
+        const { gesture } = input;
+        /* 匹配当前绑定（code + modifiers） */
+        if (gesture.code !== binding.code) return;
+        const mods: string[] = [];
+        if (gesture.control) mods.push('control');
+        if (gesture.alt) mods.push('alt');
+        if (gesture.shift) mods.push('shift');
+        if (gesture.meta) mods.push('meta');
+        if (mods.join('+') !== binding.modifiers.join('+')) return;
+        /* 焦点在 xterm 终端内时放行——让 shell 处理 */
+        const { context } = input;
+        if (context.target instanceof HTMLElement && context.target.closest('.dshTermPane') !== null) return;
+        /* 打开我们的终端 */
+        const betterSidebar = getBetterSidebarService();
+        if (betterSidebar?.openTab !== undefined) {
+          betterSidebar.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal', target: 'bottom' });
+        } else {
+          notifyPanelToggle();
+        }
+      });
+    };
+
+    /* 初始注册 + 监听 catalog 变化（用户改键时重新注册） */
+    register();
+    const unsubCatalog = shortcuts.catalog.subscribe(() => { register(); });
+
+    interceptCleanup = () => {
+      unsubCatalog();
+      fixedDispose?.();
+      observeDispose?.();
+    };
+  });
+  ctx.effect(() => () => { void interceptSeat.dispose(); interceptCleanup(); }, 'dsh-oh-my-terminal.host-terminal-intercept');
+
   // 即时探测：DSH-better-sidebar 先激活时直接走兼容模式
   const betterSidebar = detectBetterSidebar(ctx);
   if (betterSidebar !== undefined) {
@@ -186,6 +278,31 @@ function registerStandaloneDock(ctx: ClientContext): () => void {
   }) as () => void;
 }
 
+/** 兼容模式下保存的 DSH-better-sidebar 服务引用（拦截快捷键时用于 openTab） */
+let _betterSidebarService: BetterSidebarServiceLike | undefined;
+
+/**
+ * 获取兼容模式下保存的 DSH-better-sidebar 服务引用。
+ * 拦截快捷键时用于 openTab 打开我们的终端 tab。
+ * @returns betterSidebar 服务实例，未在兼容模式或已销毁时 undefined
+ */
+export function getBetterSidebarService(): BetterSidebarServiceLike | undefined {
+  return _betterSidebarService;
+}
+
+/** 内部设置器（registerSidebarTab 调用） */
+function setBetterSidebarService(service: BetterSidebarServiceLike | undefined): void {
+  _betterSidebarService = service;
+}
+
+/** 是否隐藏 DSH 宿主终端——由 useConfig 从 /config 读取后设置，apply 的 keydown 拦截器读取 */
+let _hideHostTerminal = true;
+
+/** 内部设置器（TerminalPanel/TerminalSidebarTab 的 useConfig effect 调用） */
+export function setHideHostTerminal(value: boolean): void {
+  _hideHostTerminal = value;
+}
+
 /**
  * 兼容模式：通过 DSH-better-sidebar 的 registerTab 注册"终端"tab。
  *
@@ -197,19 +314,21 @@ function registerStandaloneDock(ctx: ClientContext): () => void {
  * @param service - DSH-better-sidebar 的 betterSidebar 服务实例
  */
 function registerSidebarTab(ctx: ClientContext, service: BetterSidebarServiceLike): void {
+  setBetterSidebarService(service);
   try {
     // 能力探测：DSH-better-sidebar v0.25.0+ 支持 rightActions（操作按钮注入 tab 栏右端）；
     // 旧版本不支持时回退到内容区顶部两层显示方案（useHeader=true）
     const supportsRightActions = service.features?.includes('rightActions') ?? false;
     const descriptor = createTerminalTabDescriptor(supportsRightActions);
     const dispose = service.registerTab(descriptor);
-    // 命令随插件销毁注销（registerTab 返回幂等 disposer）
-    ctx.effect(() => dispose, 'dsh-oh-my-terminal.sidebar-tab');
+    // 命令随插件销毁注销（registerTab 返回幂等 disposer），同时清空 service 引用
+    ctx.effect(() => () => { dispose(); setBetterSidebarService(undefined); }, 'dsh-oh-my-terminal.sidebar-tab');
     log.info(`已接入 DSH-better-sidebar 兼容模式（终端 tab 注册到底部工作台，rightActions=${supportsRightActions}）`);
   } catch (error) {
     // 注册抛错（如 tab id 已被其他插件占用）→ 降级为独立模式
     const msg = error instanceof Error ? error.message : String(error);
     log.warn(`betterSidebar registerTab 失败，降级为独立模式：${msg}`);
+    setBetterSidebarService(undefined);
     registerStandaloneDock(ctx);
   }
 }
@@ -348,7 +467,18 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   });
 
   /* —— 统一配置拉取（/config：快捷键 + 字体 + 终端配置表，单次请求） + 全局 keydown 监听 —— */
-  const { shortcutLabel, fontFamily, fontSize, lineHeight, terminalProfiles } = useConfig(setOpen);
+  const { shortcutLabel, fontFamily, fontSize, lineHeight, terminalProfiles, hideHostTerminal } = useConfig(setOpen);
+
+  /* 隐藏 DSH 宿主自带终端 tab——根据 /config 下发的 hideHostTerminal 开关控制 */
+  useEffect(() => {
+    setHideHostTerminal(hideHostTerminal);
+    if (hideHostTerminal) {
+      document.body.classList.add('dshTermHideHostTerminal');
+    } else {
+      document.body.classList.remove('dshTermHideHostTerminal');
+    }
+    return () => { document.body.classList.remove('dshTermHideHostTerminal'); };
+  }, [hideHostTerminal]);
 
   /** 首次打开已处理标记（关闭最后一个终端不自动新建，只有全新打开才建） */
   const openHandled = useRef(false);

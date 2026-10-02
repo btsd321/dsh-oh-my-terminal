@@ -35,12 +35,13 @@ export const BRIDGE_PREFIX = '/settings';
  * 必须只涉及这些字段，涉及其他字段的操作将被拒绝。这是纵深防御——防止前端
  * 意外或恶意写入非预期字段（如内部状态标记）。
  *
- * 5 个字段对应插件 Config 的 5 个 volatile 字段：
+ * 6 个字段对应插件 Config 的 6 个 volatile 字段：
  * - toggleShortcut: 展开/收起面板的快捷键
  * - terminalProfiles: 终端配置表（JSON 字符串）
  * - fontFamily: 终端字体族
  * - fontSize: 终端字号（像素）
  * - lineHeight: 终端行高倍数
+ * - hideHostTerminal: 是否隐藏 DSH 宿主自带终端 tab
  */
 export const WRITABLE_FIELDS: readonly string[] = [
   'toggleShortcut',
@@ -48,4 +49,5 @@ export const WRITABLE_FIELDS: readonly string[] = [
   'fontFamily',
   'fontSize',
   'lineHeight',
+  'hideHostTerminal',
 ];

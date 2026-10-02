@@ -58,7 +58,7 @@ export type FormAction =
   | { type: 'LOAD_START' }
   | { type: 'LOAD_SUCCESS'; descriptor: SettingsDescriptor }
   | { type: 'LOAD_FAILURE'; message: string }
-  | { type: 'EDIT_FIELD'; field: keyof TerminalSettingsValues; value: string | number }
+  | { type: 'EDIT_FIELD'; field: keyof TerminalSettingsValues; value: string | number | boolean }
   | { type: 'SAVE_START' }
   | { type: 'SAVE_SUCCESS'; descriptor: SettingsDescriptor }
   | { type: 'SAVE_FAILURE'; message: string; code?: string }
@@ -83,6 +83,7 @@ export function createInitialFormState(): FormState {
     lineHeight: 0,
     /* 空串 = 宿主半用启动探测结果（与 Config schema 的默认值语义一致） */
     terminalProfiles: '',
+    hideHostTerminal: true,
   };
   return {
     status: 'idle',
