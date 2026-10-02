@@ -97,9 +97,6 @@ export interface ISashOptions {
   readonly size?: number;
 }
 
-/** sash 拖拽期间注入到 document 的 <style>，强制全局 cursor */
-let sashDragStyle: HTMLStyleElement | null = null;
-
 /**
  * 拖拽分隔条：一条不可见的线，hover 时高亮，拖拽时发出位移事件。
  *
@@ -230,7 +227,7 @@ export class Sash extends Disposable {
       style.textContent = `* { cursor: ${cursor} !important; }`;
     };
     updateStyle();
-    this.onDidEnablementChange.event(updateStyle);
+    const enablementSub = this.onDidEnablementChange.event(updateStyle);
 
     const onPointerMove = (e: MouseEvent): void => {
       e.preventDefault();
@@ -240,6 +237,7 @@ export class Sash extends Disposable {
     const onPointerUp = (e: MouseEvent): void => {
       e.preventDefault();
       style.remove();
+      enablementSub.dispose();
       this.el.classList.remove('active');
       this._onDidEnd.fire();
       document.removeEventListener('mousemove', onPointerMove);
@@ -280,7 +278,7 @@ const SASH_GLOBAL_SIZE = 6;
 // （避免引入 VSCode 的完整 lifecycle/event 模块；这里只复刻 Sash 需要的最小接口）
 
 /** 事件发射器（复刻 VSCode Emitter 的最小子集） */
-class Emitter<T> {
+export class Emitter<T> {
   private listeners: ((e: T) => void)[] = [];
   /** 订阅事件 */
   readonly event = (listener: (e: T) => void): IDisposable => {

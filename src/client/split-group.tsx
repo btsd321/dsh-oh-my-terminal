@@ -95,13 +95,13 @@ export function SplitGroup(props: SplitGroupProps): ReactElement {
     const currentIds = new Set(instances.map((i) => i.id));
     const hostMap = hostMapRef.current;
 
-    /* 删除不在当前 instances 中的 view */
+    /* 删除不在当前 instances 中的 view（倒序删除避免索引移位） */
     const existingIds = Array.from(hostMap.keys());
-    for (const id of existingIds) {
+    for (let i = existingIds.length - 1; i >= 0; i--) {
+      const id = existingIds[i];
       if (!currentIds.has(id)) {
-        const idx = existingIds.indexOf(id);
-        if (idx >= 0 && idx < sv.length) {
-          sv.removeView(idx);
+        if (i >= 0 && i < sv.length) {
+          sv.removeView(i);
         }
         hostMap.delete(id);
       }

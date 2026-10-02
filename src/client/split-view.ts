@@ -15,7 +15,7 @@
  *                onSashStart/Change/End 事件处理、sash 启用状态计算
  */
 
-import { Disposable, type IDisposable, Sash, SashState, Orientation, type IVerticalSashLayoutProvider } from './sash.js';
+import { Disposable, type IDisposable, Sash, SashState, Orientation, type IVerticalSashLayoutProvider, Emitter } from './sash.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('split-view');
@@ -519,19 +519,4 @@ export class SplitView extends Disposable implements IVerticalSashLayoutProvider
     this.sashItems = [];
     super.dispose();
   }
-}
-
-// —— Emitter 适配（sash.ts 已有 Emitter，但 split-view.ts 独立使用） ——
-class Emitter<T> {
-  private listeners: ((e: T) => void)[] = [];
-  readonly event = (listener: (e: T) => void): IDisposable => {
-    this.listeners.push(listener);
-    return { dispose: () => { this.listeners = this.listeners.filter((l) => l !== listener); } };
-  };
-  fire(e: T): void {
-    for (const listener of this.listeners) {
-      try { listener(e); } catch (err) { log.error('split-view 事件监听器抛错', err); }
-    }
-  }
-  dispose(): void { this.listeners = []; }
 }
