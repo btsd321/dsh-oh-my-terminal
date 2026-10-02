@@ -175,13 +175,14 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
 .dshTermSplitViewView{position:absolute;top:0;height:100%;overflow:hidden}
 .dshTermSplitViewPaneHost{position:absolute;inset:0}
 .dshTermSplitViewPaneHost > .dshTermPane{display:block}
-/* Sash——可拖拽分隔条（复刻 VSCode Sash）：不可见线，hover 时高亮，拖拽时 active */
+/* Sash——可拖拽分隔条（复刻 VSCode Sash）：始终可见的竖线，hover 时高亮，拖拽时 active */
 .dshTermSashContainer{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
-.dshTermSash{position:absolute;top:0;height:100%;width:6px;cursor:ew-resize;pointer-events:auto;z-index:20}
+.dshTermSash{position:absolute;top:0;height:100%;width:1px;cursor:ew-resize;pointer-events:auto;z-index:20;background:var(--dsw-alias-border-l1)}
 .dshTermSash.vertical{cursor:ew-resize}
 .dshTermSash.horizontal{cursor:ns-resize}
-.dshTermSash.hover{background:var(--dsw-alias-interactive-bg-hover)}
-.dshTermSash.active{background:var(--dsw-alias-interactive-bg-hover)}
+/* hover/active 时加宽 sash 命中区域并高亮——用伪元素扩展可拖拽范围，避免改 sash 宽度导致位置偏移 */
+.dshTermSash.hover,.dshTermSash.active{background:var(--dsw-alias-interactive-bg-hover)}
+.dshTermSash.hover::before,.dshTermSash.active::before{content:'';position:absolute;top:0;bottom:0;left:-4px;width:9px}
 .dshTermSash.disabled{pointer-events:none}
 .dshTermSash.minimum{cursor:e-resize}
 .dshTermSash.maximum{cursor:w-resize}
