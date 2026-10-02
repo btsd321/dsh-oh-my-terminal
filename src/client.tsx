@@ -139,6 +139,32 @@ export function apply(ctx: ClientContext): void {
   // 设置页始终注册（两种模式用户都需配置终端种类/字体等）
   registerSettingsPage(ctx);
 
+  // 全局拦截 DSH 宿主终端快捷键（Ctrl+`，无 Shift）——hideHostTerminal 开启时，
+  // 在捕获阶段拦截，阻止 DSH 宿主终端打开。放在 apply 级别（非组件 useEffect），
+  // 确保即使终端面板组件未挂载（如非对话页面）也能拦截。
+  // _hideHostTerminal 由 TerminalPanel/TerminalSidebarTab 的 useConfig effect 设置。
+  ctx.effect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!_hideHostTerminal) return;
+      /* Ctrl+`（不带 Shift）——DSH 宿主终端的默认快捷键 */
+      if (e.ctrlKey && e.code === 'Backquote' && !e.shiftKey && !e.altKey && !e.metaKey) {
+        /* 焦点在 xterm 终端内时放行——让 shell 处理 */
+        if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        /* 通知已挂载的面板切换（原生模式），或通过 betterSidebar openTab 打开终端 tab（兼容模式） */
+        const service = getBetterSidebarService();
+        if (service?.openTab !== undefined) {
+          service.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal' });
+        } else {
+          notifyPanelToggle();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); };
+  }, 'dsh-oh-my-terminal.host-terminal-intercept');
+
   // 即时探测：DSH-better-sidebar 先激活时直接走兼容模式
   const betterSidebar = detectBetterSidebar(ctx);
   if (betterSidebar !== undefined) {
@@ -201,6 +227,14 @@ export function getBetterSidebarService(): BetterSidebarServiceLike | undefined 
 /** 内部设置器（registerSidebarTab 调用） */
 function setBetterSidebarService(service: BetterSidebarServiceLike | undefined): void {
   _betterSidebarService = service;
+}
+
+/** 是否隐藏 DSH 宿主终端——由 useConfig 从 /config 读取后设置，apply 的 keydown 拦截器读取 */
+let _hideHostTerminal = true;
+
+/** 内部设置器（TerminalPanel/TerminalSidebarTab 的 useConfig effect 调用） */
+export function setHideHostTerminal(value: boolean): void {
+  _hideHostTerminal = value;
 }
 
 /**
@@ -371,34 +405,13 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
 
   /* 隐藏 DSH 宿主自带终端 tab——根据 /config 下发的 hideHostTerminal 开关控制 */
   useEffect(() => {
+    setHideHostTerminal(hideHostTerminal);
     if (hideHostTerminal) {
       document.body.classList.add('dshTermHideHostTerminal');
     } else {
       document.body.classList.remove('dshTermHideHostTerminal');
     }
     return () => { document.body.classList.remove('dshTermHideHostTerminal'); };
-  }, [hideHostTerminal]);
-
-  /* 拦截 DSH 宿主终端快捷键（Ctrl+`，无 Shift）——hideHostTerminal 开启时，
-   * 在捕获阶段拦截该快捷键，阻止 DSH 宿主终端打开，改为切换我们的终端面板。
-   * 用 capture: true 确保在 DSH 宿主的 shortcuts 系统之前截获（shortcuts 系统
-   * 也在 document 上监听，但 capture 先于 bubble）。不拦截 Ctrl+Shift+`（我们的
-   * 切换快捷键）和焦点在 xterm 内的按键（留给 shell） */
-  useEffect(() => {
-    if (!hideHostTerminal) return;
-    const onKey = (e: KeyboardEvent): void => {
-      /* Ctrl+`（不带 Shift）——DSH 宿主终端的默认快捷键 */
-      if (e.ctrlKey && e.code === 'Backquote' && !e.shiftKey && !e.altKey && !e.metaKey) {
-        /* 焦点在 xterm 终端内时放行——让 shell 处理（如 bash 的 Ctrl+` 无默认绑定，
-         * 但保持与面板内快捷键不冲突的语义一致） */
-        if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
-        e.preventDefault();
-        e.stopPropagation();
-        setOpen(v => !v);
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => { window.removeEventListener('keydown', onKey, true); };
   }, [hideHostTerminal]);
 
   /** 首次打开已处理标记（关闭最后一个终端不自动新建，只有全新打开才建） */
