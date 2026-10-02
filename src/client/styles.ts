@@ -163,6 +163,31 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
 .dshTermSplitDivider{width:1px;background:var(--dsw-alias-border-l1);flex:none;cursor:col-resize}
 .dshTermPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:#1e2128}
 .dshTermPane.isActive{display:block}
+/* 拆分组内所有 pane 始终可见——拆分终端同组实例水平并排同时显示，
+ * display:none 是为单实例组多 tab 切换设计的（同一时间只显示一个 tab），
+ * 拆分组内所有 pane 应同时可见（参考 VSCode SplitPaneContainer：组内 pane
+ * 不用 display:none 切换，只有组级别的 setVisible 才用 display:none） */
+.dshTermSplitPane > .dshTermPane{display:block}
+/* SplitView（复刻 VSCode SplitView）——绝对定位 pane + Sash 拖拽分隔条 */
+.dshTermSplitGroupContainer{position:absolute;inset:0;overflow:hidden}
+.dshTermSplitView{position:relative;width:100%;height:100%}
+.dshTermSplitViewContainer{position:relative;width:100%;height:100%;overflow:hidden}
+.dshTermSplitViewView{position:absolute;top:0;height:100%;overflow:hidden}
+.dshTermSplitViewPaneHost{position:absolute;inset:0}
+.dshTermSplitViewPaneHost > .dshTermPane{display:block}
+/* Sash——可拖拽分隔条（复刻 VSCode Sash）：始终可见的竖线，hover 时高亮，拖拽时 active */
+.dshTermSashContainer{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+.dshTermSash{position:absolute;top:0;height:100%;width:2px;cursor:ew-resize;pointer-events:auto;z-index:20;background:#3e4452}
+.dshTermSash.vertical{cursor:ew-resize}
+.dshTermSash.horizontal{cursor:ns-resize}
+/* hover/active 时加宽 sash 命中区域并高亮——用伪元素扩展可拖拽范围，避免改 sash 宽度导致位置偏移 */
+.dshTermSash.hover,.dshTermSash.active{background:#4e5566}
+.dshTermSash.hover::before,.dshTermSash.active::before{content:'';position:absolute;top:0;bottom:0;left:-4px;width:10px}
+.dshTermSash.disabled{pointer-events:none}
+.dshTermSash.minimum{cursor:e-resize}
+.dshTermSash.maximum{cursor:w-resize}
+/* 拖拽期间禁用 iframe 指针事件（防 iframe 吃 mousemove——VSCode #21675） */
+.dshTermSashIframeDisabled{pointer-events:none!important}
 .dshTermEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8b90a0;font-family:Inter,var(--dsw-font-family);font-size:12px}
 .dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dshTermEmptyBtn:hover{background:#343946}
