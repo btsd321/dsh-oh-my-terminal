@@ -39,7 +39,7 @@ import type { ReactElement } from 'react';
 import type { Context } from '@deepseek-ai/cordis';
 // import type：构建期擦除，浏览器 bundle 不携带对官方包的运行时引用——
 // shortcuts 服务实例由宿主运行期提供，插件只消费其方法与类型
-import type { Shortcuts, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client';
+import type { Shortcuts, ShortcutCommandId, ShortcutBinding } from '@deepseek-ai/dsh-client-shortcuts/client';
 // 子模块导入——esbuild 打包浏览器 bundle 时内联进 client.js
 import {
   TerminalGlyph14, TerminalGlyph12,
@@ -140,29 +140,97 @@ export function apply(ctx: ClientContext): void {
   registerSettingsPage(ctx);
 
   // 全局拦截 DSH 宿主终端快捷键（Ctrl+`，无 Shift）——hideHostTerminal 开启时，
-  // 在捕获阶段拦截，阻止 DSH 宿主终端打开。放在 apply 级别（非组件 useEffect），
-  // 确保即使终端面板组件未挂载（如非对话页面）也能拦截。
-  // _hideHostTerminal 由 TerminalPanel/TerminalSidebarTab 的 useConfig effect 设置。
+  // 通过注册 fixed 快捷键命令与 terminal.new 的 Ctrl+` 绑定冲突，使其从 bindings
+  // 移入 conflicts，dispatch 时返回 blocked 不执行。同时通过 observeFixedInput
+  // 监听 fixed input，触发时打开我们的终端。
+  // 桌面端 DSH 用 native keyboard bridge 处理快捷键（绕过 DOM keydown），所以
+  // DOM keydown 拦截无效，必须用 shortcuts 系统的 fixed 命令机制。
   ctx.effect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (!_hideHostTerminal) return;
-      /* Ctrl+`（不带 Shift）——DSH 宿主终端的默认快捷键 */
-      if (e.ctrlKey && e.code === 'Backquote' && !e.shiftKey && !e.altKey && !e.metaKey) {
+    const service = typeof ctx.get === 'function' ? ctx.get('shortcuts') : undefined;
+    if (service === undefined || typeof (service as Shortcuts).registerFixed !== 'function') {
+      return () => {};
+    }
+    const shortcuts = service as Shortcuts;
+
+    /* DSH 宿主终端命令的 id——从 catalog 读取它的当前绑定（用户可能改过键），
+     * 然后用相同绑定注册 fixed 命令使其冲突阻塞。用户改键时重新注册。 */
+    const HOST_TERMINAL_CMD = 'terminal.new' as ShortcutCommandId;
+
+    /** 从 catalog 读取 terminal.new 的当前绑定，转为 ShortcutBinding */
+    const readHostBinding = (): ShortcutBinding | null => {
+      const rows = shortcuts.catalog.getSnapshot();
+      const row = rows.find((r) => r.id === HOST_TERMINAL_CMD);
+      if (row === undefined || row.binding === null) return null;
+      return { code: row.binding.code, ...(row.binding.secondCode !== undefined ? { secondCode: row.binding.secondCode } : {}), modifiers: row.binding.modifiers };
+    };
+
+    /** 当前已注册的 fixed 命令 disposer + 对应的绑定（检测变化时重新注册） */
+    let fixedDispose: (() => void) | undefined;
+    let currentBinding: ShortcutBinding | null = null;
+    /** 当前已注册的 observeFixedInput disposer（绑定变化时重新注册） */
+    let observeDispose: (() => void) | undefined;
+
+    /** 注册/重新注册 fixed 命令 + observeFixedInput */
+    const register = (): void => {
+      const binding = readHostBinding();
+      if (binding === null) return;
+      /* 绑定未变化时不重复注册 */
+      if (currentBinding !== null && currentBinding.code === binding.code && currentBinding.secondCode === binding.secondCode && currentBinding.modifiers.join('+') === binding.modifiers.join('+')) return;
+      /* 注销旧的 */
+      fixedDispose?.();
+      observeDispose?.();
+      currentBinding = binding;
+
+      /* 注册 fixed 命令占用相同绑定，与 terminal.new 冲突 */
+      try {
+        fixedDispose = shortcuts.registerFixed({
+          id: 'terminal-panel.host-intercept' as ShortcutCommandId,
+          label: () => '打开终端（拦截宿主终端）',
+          keys: [binding.modifiers.map((m) => m.charAt(0).toUpperCase() + m.slice(1)).join('+') + '+' + binding.code],
+          group: 'application',
+          bindings: [binding],
+        });
+      } catch {
+        /* 命令已注册（插件重载）——忽略，旧 disposer 会清理 */
+        fixedDispose = undefined;
+        return;
+      }
+
+      /* 监听 fixed input——绑定键触发时打开我们的终端 */
+      observeDispose = shortcuts.observeFixedInput((input) => {
+        if (!_hideHostTerminal) return;
+        if (input.type !== 'keydown') return;
+        const { gesture } = input;
+        /* 匹配当前绑定（code + modifiers） */
+        if (gesture.code !== binding.code) return;
+        const mods: string[] = [];
+        if (gesture.control) mods.push('control');
+        if (gesture.alt) mods.push('alt');
+        if (gesture.shift) mods.push('shift');
+        if (gesture.meta) mods.push('meta');
+        if (mods.join('+') !== binding.modifiers.join('+')) return;
         /* 焦点在 xterm 终端内时放行——让 shell 处理 */
-        if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
-        e.preventDefault();
-        e.stopPropagation();
-        /* 通知已挂载的面板切换（原生模式），或通过 betterSidebar openTab 打开终端 tab（兼容模式） */
-        const service = getBetterSidebarService();
-        if (service?.openTab !== undefined) {
-          service.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal' });
+        const { context } = input;
+        if (context.target instanceof HTMLElement && context.target.closest('.dshTermPane') !== null) return;
+        /* 打开我们的终端 */
+        const betterSidebar = getBetterSidebarService();
+        if (betterSidebar?.openTab !== undefined) {
+          betterSidebar.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal' });
         } else {
           notifyPanelToggle();
         }
-      }
+      });
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => { window.removeEventListener('keydown', onKey, true); };
+
+    /* 初始注册 + 监听 catalog 变化（用户改键时重新注册） */
+    register();
+    const unsubCatalog = shortcuts.catalog.subscribe(() => { register(); });
+
+    return () => {
+      unsubCatalog();
+      fixedDispose?.();
+      observeDispose?.();
+    };
   }, 'dsh-oh-my-terminal.host-terminal-intercept');
 
   // 即时探测：DSH-better-sidebar 先激活时直接走兼容模式
@@ -235,6 +303,7 @@ let _hideHostTerminal = true;
 /** 内部设置器（TerminalPanel/TerminalSidebarTab 的 useConfig effect 调用） */
 export function setHideHostTerminal(value: boolean): void {
   _hideHostTerminal = value;
+  log.info('setHideHostTerminal', { value });
 }
 
 /**
