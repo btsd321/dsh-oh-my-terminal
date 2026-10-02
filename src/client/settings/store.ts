@@ -83,6 +83,7 @@ export function createInitialFormState(): FormState {
     lineHeight: 0,
     /* 空串 = 宿主半用启动探测结果（与 Config schema 的默认值语义一致） */
     terminalProfiles: '',
+    hideHostTerminal: true,
   };
   return {
     status: 'idle',

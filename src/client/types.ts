@@ -98,6 +98,8 @@ export interface ConfigResponse {
   lineHeight?: number;
   /** 终端配置表（type/name/path 模型） */
   terminalProfiles?: TerminalProfile[];
+  /** 是否隐藏 DSH 宿主自带终端 tab */
+  hideHostTerminal?: boolean;
 }
 
 /** 对话区几何信息（面板宽度对齐对话列，不覆盖侧栏） */

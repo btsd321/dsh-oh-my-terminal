@@ -64,6 +64,8 @@ export interface TerminalSettingsValues {
   lineHeight: number;
   /** 终端配置表（JSON 字符串，序列化的 TerminalProfile[]） */
   terminalProfiles: string;
+  /** 是否隐藏 DSH 宿主自带终端 tab */
+  hideHostTerminal: boolean;
 }
 
 // —— Settings Bridge 配置描述符 ——

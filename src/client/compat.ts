@@ -79,6 +79,11 @@ export interface BetterSidebarServiceLike {
   /** 注册一个 tab 类型，返回注销函数 */
   registerTab(descriptor: BetterSidebarTabDescriptorLike): () => void;
   /**
+   * 打开一个 tab（按 type/id 聚焦或新建），返回是否成功。
+   * 用于兼容模式下拦截 DSH 宿主终端快捷键后打开我们的终端 tab。
+   */
+  openTab?(tab: { type: string; id?: string; title?: string }, scope?: { sessionId: string; cwd?: string }): boolean;
+  /**
    * 能力列表（v0.12.0+）：单调递增，能力只增不删。消费方用 includes 探测
    * 新能力是否可用，不可用时降级。本插件用 'rightActions' 探测 tab 栏
    * 右侧操作注入是否可用，不可用时回退到内容区顶部两层显示方案。

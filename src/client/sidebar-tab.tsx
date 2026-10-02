@@ -42,6 +42,7 @@ import { DropdownMenu } from './dropdown.js';
 import { SideList, instanceLabel } from './side-list.js';
 import { TerminalGlyph14, Plus12 } from './icons.js';
 import type { TabComponentPropsLike, BetterSidebarTabDescriptorLike } from './compat.js';
+import { getBetterSidebarService } from '../client.js';
 
 /** 侧边栏终端 tab 在 + 菜单中的排序权重（排在内置 tab 之后） */
 const SIDEBAR_TAB_ORDER = 40;
@@ -101,11 +102,43 @@ function TerminalSidebarTab(props: TabComponentPropsLike & { useHeader?: boolean
   });
 
   /* —— 统一配置拉取（/config） —— */
-  const { fontFamily, fontSize, lineHeight, terminalProfiles } = useConfig(
+  const { fontFamily, fontSize, lineHeight, terminalProfiles, hideHostTerminal } = useConfig(
     /* setOpen 在侧边栏模式下无意义（展开/折叠由 DSH-better-sidebar 工作台控制），
      * 传一个空操作 setter 满足 useConfig 签名 */
     () => { /* 侧边栏模式下快捷键不切换面板 */ },
   );
+
+  /* 隐藏 DSH 宿主自带终端 tab——根据 /config 下发的 hideHostTerminal 开关控制 */
+  useEffect(() => {
+    if (hideHostTerminal) {
+      document.body.classList.add('dshTermHideHostTerminal');
+    } else {
+      document.body.classList.remove('dshTermHideHostTerminal');
+    }
+    return () => { document.body.classList.remove('dshTermHideHostTerminal'); };
+  }, [hideHostTerminal]);
+
+  /* 拦截 DSH 宿主终端快捷键（Ctrl+`，无 Shift）——hideHostTerminal 开启时，
+   * 在捕获阶段拦截该快捷键，阻止 DSH 宿主终端打开，改为通过 DSH-better-sidebar
+   * 的 openTab 打开我们的终端 tab。用 capture: true 确保在 DSH 宿主的 shortcuts
+   * 系统之前截获。不拦截 Ctrl+Shift+` 和焦点在 xterm 内的按键 */
+  useEffect(() => {
+    if (!hideHostTerminal) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey && e.code === 'Backquote' && !e.shiftKey && !e.altKey && !e.metaKey) {
+        if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        /* 通过 DSH-better-sidebar 的 openTab 打开我们的终端 tab */
+        const service = getBetterSidebarService();
+        if (service?.openTab !== undefined) {
+          service.openTab({ type: 'dsh-oh-my-terminal', id: 'dsh-oh-my-terminal' }, scope);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); };
+  }, [hideHostTerminal, scope]);
 
   /**
    * 按配置 id 新建终端。

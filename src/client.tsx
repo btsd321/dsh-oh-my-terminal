@@ -186,6 +186,23 @@ function registerStandaloneDock(ctx: ClientContext): () => void {
   }) as () => void;
 }
 
+/** 兼容模式下保存的 DSH-better-sidebar 服务引用（拦截快捷键时用于 openTab） */
+let _betterSidebarService: BetterSidebarServiceLike | undefined;
+
+/**
+ * 获取兼容模式下保存的 DSH-better-sidebar 服务引用。
+ * 拦截快捷键时用于 openTab 打开我们的终端 tab。
+ * @returns betterSidebar 服务实例，未在兼容模式或已销毁时 undefined
+ */
+export function getBetterSidebarService(): BetterSidebarServiceLike | undefined {
+  return _betterSidebarService;
+}
+
+/** 内部设置器（registerSidebarTab 调用） */
+function setBetterSidebarService(service: BetterSidebarServiceLike | undefined): void {
+  _betterSidebarService = service;
+}
+
 /**
  * 兼容模式：通过 DSH-better-sidebar 的 registerTab 注册"终端"tab。
  *
@@ -197,19 +214,21 @@ function registerStandaloneDock(ctx: ClientContext): () => void {
  * @param service - DSH-better-sidebar 的 betterSidebar 服务实例
  */
 function registerSidebarTab(ctx: ClientContext, service: BetterSidebarServiceLike): void {
+  setBetterSidebarService(service);
   try {
     // 能力探测：DSH-better-sidebar v0.25.0+ 支持 rightActions（操作按钮注入 tab 栏右端）；
     // 旧版本不支持时回退到内容区顶部两层显示方案（useHeader=true）
     const supportsRightActions = service.features?.includes('rightActions') ?? false;
     const descriptor = createTerminalTabDescriptor(supportsRightActions);
     const dispose = service.registerTab(descriptor);
-    // 命令随插件销毁注销（registerTab 返回幂等 disposer）
-    ctx.effect(() => dispose, 'dsh-oh-my-terminal.sidebar-tab');
+    // 命令随插件销毁注销（registerTab 返回幂等 disposer），同时清空 service 引用
+    ctx.effect(() => () => { dispose(); setBetterSidebarService(undefined); }, 'dsh-oh-my-terminal.sidebar-tab');
     log.info(`已接入 DSH-better-sidebar 兼容模式（终端 tab 注册到底部工作台，rightActions=${supportsRightActions}）`);
   } catch (error) {
     // 注册抛错（如 tab id 已被其他插件占用）→ 降级为独立模式
     const msg = error instanceof Error ? error.message : String(error);
     log.warn(`betterSidebar registerTab 失败，降级为独立模式：${msg}`);
+    setBetterSidebarService(undefined);
     registerStandaloneDock(ctx);
   }
 }
@@ -348,7 +367,39 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   });
 
   /* —— 统一配置拉取（/config：快捷键 + 字体 + 终端配置表，单次请求） + 全局 keydown 监听 —— */
-  const { shortcutLabel, fontFamily, fontSize, lineHeight, terminalProfiles } = useConfig(setOpen);
+  const { shortcutLabel, fontFamily, fontSize, lineHeight, terminalProfiles, hideHostTerminal } = useConfig(setOpen);
+
+  /* 隐藏 DSH 宿主自带终端 tab——根据 /config 下发的 hideHostTerminal 开关控制 */
+  useEffect(() => {
+    if (hideHostTerminal) {
+      document.body.classList.add('dshTermHideHostTerminal');
+    } else {
+      document.body.classList.remove('dshTermHideHostTerminal');
+    }
+    return () => { document.body.classList.remove('dshTermHideHostTerminal'); };
+  }, [hideHostTerminal]);
+
+  /* 拦截 DSH 宿主终端快捷键（Ctrl+`，无 Shift）——hideHostTerminal 开启时，
+   * 在捕获阶段拦截该快捷键，阻止 DSH 宿主终端打开，改为切换我们的终端面板。
+   * 用 capture: true 确保在 DSH 宿主的 shortcuts 系统之前截获（shortcuts 系统
+   * 也在 document 上监听，但 capture 先于 bubble）。不拦截 Ctrl+Shift+`（我们的
+   * 切换快捷键）和焦点在 xterm 内的按键（留给 shell） */
+  useEffect(() => {
+    if (!hideHostTerminal) return;
+    const onKey = (e: KeyboardEvent): void => {
+      /* Ctrl+`（不带 Shift）——DSH 宿主终端的默认快捷键 */
+      if (e.ctrlKey && e.code === 'Backquote' && !e.shiftKey && !e.altKey && !e.metaKey) {
+        /* 焦点在 xterm 终端内时放行——让 shell 处理（如 bash 的 Ctrl+` 无默认绑定，
+         * 但保持与面板内快捷键不冲突的语义一致） */
+        if (e.target instanceof HTMLElement && e.target.closest('.dshTermPane') !== null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); };
+  }, [hideHostTerminal]);
 
   /** 首次打开已处理标记（关闭最后一个终端不自动新建，只有全新打开才建） */
   const openHandled = useRef(false);

@@ -152,6 +152,8 @@ export interface Config {
    * 且配置文件里出现嵌套数组会让 patch 层难以表达。
    */
   terminalProfiles: Volatile<string | undefined>;
+  /** 是否隐藏 DSH 宿主自带终端 tab（兼容模式和原生模式均生效） */
+  hideHostTerminal: Volatile<boolean | undefined>;
 }
 
 /**
@@ -181,6 +183,10 @@ export const Config = z.object({
   terminalProfiles: z.string()
     .description('终端配置表（JSON 数组）。每项形如 {"id":"t-pwsh-ab12","type":"pwsh","name":"PowerShell 7","path":"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe","origin":"auto"}。type 决定 spawn 语义（pwsh/powershell/cmd/bash/zsh/fish/gitbash/nushell/custom），name 是下拉菜单显示名，path 留空则按 type 在 $PATH 中解析。留空整表（默认）表示用启动时探测到的 $PATH 终端。自动探测项（origin=auto）不可删除、路径不可改，但可改名')
     .default('')
+    .volatile(),
+  hideHostTerminal: z.boolean()
+    .description('是否隐藏 DSH 宿主自带的侧边栏终端 tab（+菜单里的"新建终端"）。开启后只显示本插件的终端。默认开启')
+    .default(true)
     .volatile(),
 });
 
@@ -258,6 +264,11 @@ export function apply(ctx: Context, config: Config): void {
      */
     get profiles(): readonly TerminalProfile[] {
       return cachedProfiles;
+    },
+    /** 是否隐藏 DSH 宿主自带终端 tab——默认 true（两种模式均生效） */
+    get hideHostTerminal(): boolean {
+      const value = config.hideHostTerminal.get();
+      return typeof value === 'boolean' ? value : true;
     },
   };
 
