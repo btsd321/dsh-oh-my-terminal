@@ -75,6 +75,7 @@ export function renderTerminalGroups(
             React.createElement(TermPane, {
               instance: inst,
               active: inst.id === activeInstanceId,
+              alwaysVisible: true,
               fontFamily,
               fontSize,
               lineHeight,

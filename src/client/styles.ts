@@ -163,6 +163,11 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
 .dshTermSplitDivider{width:1px;background:var(--dsw-alias-border-l1);flex:none;cursor:col-resize}
 .dshTermPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:#1e2128}
 .dshTermPane.isActive{display:block}
+/* 拆分组内所有 pane 始终可见——拆分终端同组实例水平并排同时显示，
+ * display:none 是为单实例组多 tab 切换设计的（同一时间只显示一个 tab），
+ * 拆分组内所有 pane 应同时可见（参考 VSCode SplitPaneContainer：组内 pane
+ * 不用 display:none 切换，只有组级别的 setVisible 才用 display:none） */
+.dshTermSplitPane > .dshTermPane{display:block}
 .dshTermEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8b90a0;font-family:Inter,var(--dsw-font-family);font-size:12px}
 .dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dshTermEmptyBtn:hover{background:#343946}

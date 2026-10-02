@@ -36,6 +36,18 @@ export interface TermPaneProps {
   lineHeight: number | undefined;
   /** 会话退出回调（标记实例为 exited） */
   onExit: (id: string) => void;
+  /**
+   * 是否始终可见（拆分组内的 pane 为 true）。
+   *
+   * 拆分组内所有 pane 水平并排同时显示，非活跃 pane 也需要 fit 与响应 resize
+   *（参考 VSCode 的 SplitPaneContainer.layout：遍历所有子 pane 调用
+   * instance.layout()，不按 active 过滤）。
+   *
+   * 单实例组（多 tab 切换）为 false：非活跃 tab 用 display:none 隐藏，
+   * 不 fit（display:none 的容器 fit 会算出 0 尺寸，参考 VSCode
+   * TerminalInstance.layout 的 `dimension.width <= 0` 守卫）。
+   */
+  alwaysVisible?: boolean;
 }
 
 /**
@@ -49,7 +61,7 @@ export interface TermPaneProps {
  * @returns 终端容器 div
  */
 export function TermPane(props: TermPaneProps): ReactElement {
-  const { instance, active, onExit, fontFamily, fontSize, lineHeight } = props;
+  const { instance, active, onExit, fontFamily, fontSize, lineHeight, alwaysVisible = false } = props;
   const { useEffect, useRef } = React;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -215,15 +227,23 @@ export function TermPane(props: TermPaneProps): ReactElement {
     return () => cancelAnimationFrame(raf);
   }, [active]);
 
-  /* 随面板 resize（只有可见 pane 能 fit） */
+  /* 随面板 resize：始终可见的 pane（拆分组）始终响应 resize，
+   * 单实例组的 pane 只有可见（active）时才 fit——display:none 的容器
+   * fit 会算出 0 尺寸（参考 VSCode TerminalInstance.layout 的
+   * `dimension.width <= 0` 守卫），所以非活跃 tab 不 fit */
   useEffect(() => {
     const host = hostRef.current;
     if (host === null) return;
     let raf = 0;
     const ro = new ResizeObserver(() => {
-      if (!active) return;
+      /* alwaysVisible 的拆分 pane 始终 fit；否则仅 active 时 fit */
+      if (!active && !alwaysVisible) return;
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        /* 零尺寸守卫：display:none 或未挂载的容器 clientWidth/Height 为 0，
+         * fit 会算出 0 列 0 行导致 PTY 尺寸错乱（参考 VScode
+         * TerminalInstance.layout 的 dimension 守卫） */
+        if (host.clientWidth === 0 || host.clientHeight === 0) return;
         try {
           fitRef.current?.fit();
         } catch { /* 未挂载 */ }
@@ -234,7 +254,7 @@ export function TermPane(props: TermPaneProps): ReactElement {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [active]);
+  }, [active, alwaysVisible]);
 
   return React.createElement('div', {
     className: 'dshTermPane' + (active ? ' isActive' : ''),
