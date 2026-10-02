@@ -94,6 +94,8 @@ export interface ConfigResult {
   lineHeight: number | undefined;
   /** 终端配置列表 */
   terminalProfiles: TerminalProfile[];
+  /** 是否隐藏 DSH 宿主自带终端 tab */
+  hideHostTerminal: boolean;
 }
 
 /**
@@ -120,6 +122,8 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
   const [fontFamily, setFontFamily] = useState('');
   const [fontSize, setFontSize] = useState<number | undefined>(undefined);
   const [lineHeight, setLineHeight] = useState<number | undefined>(undefined);
+  /* 是否隐藏 DSH 宿主自带终端 tab——默认 true */
+  const [hideHostTerminal, setHideHostTerminal] = useState(true);
   /* shortcuts 接入后的当前生效绑定标签；未接入时 null（走 shortcut.label） */
   const [catalogLabel, setCatalogLabel] = useState<string | null>(null);
   const shortcutLabel = catalogLabel ?? shortcut?.label ?? 'Ctrl+Shift+`';
@@ -143,6 +147,8 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
         if (Array.isArray(cfg.terminalProfiles)) {
           setTerminalProfiles(cfg.terminalProfiles);
         }
+        // 4. 隐藏宿主终端开关
+        if (typeof cfg.hideHostTerminal === 'boolean') setHideHostTerminal(cfg.hideHostTerminal);
       } catch {
         /* 旧宿主无 /config——保持默认 */
       }
@@ -185,7 +191,7 @@ export function useConfig(setOpen: React.Dispatch<React.SetStateAction<boolean>>
     return () => window.removeEventListener('keydown', onKey);
   }, [shortcut, setOpen]);
 
-  return { shortcut, shortcutLabel, fontFamily, fontSize, lineHeight, terminalProfiles };
+  return { shortcut, shortcutLabel, fontFamily, fontSize, lineHeight, terminalProfiles, hideHostTerminal };
 }
 
 /** useTerminalTabs 的入参 */

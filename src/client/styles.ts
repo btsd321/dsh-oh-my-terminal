@@ -188,6 +188,9 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
 .dshTermSash.maximum{cursor:w-resize}
 /* 拖拽期间禁用 iframe 指针事件（防 iframe 吃 mousemove——VSCode #21675） */
 .dshTermSashIframeDisabled{pointer-events:none!important}
+/* 隐藏 DSH 宿主自带终端 tab 的 guide 入口（+菜单里的"新建终端"）——
+ * 由 apply 函数在 body 加 .dshTermHideHostTerminal 类时生效 */
+body.dshTermHideHostTerminal [data-sidebar-right-guide-entry="terminal"]{display:none!important}
 .dshTermEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8b90a0;font-family:Inter,var(--dsw-font-family);font-size:12px}
 .dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dshTermEmptyBtn:hover{background:#343946}

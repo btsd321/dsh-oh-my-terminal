@@ -129,7 +129,7 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
 
   /* 字段编辑回调 */
   const handleEdit = useCallback(
-    (field: keyof TerminalSettingsValues, value: string | number): void => {
+    (field: keyof TerminalSettingsValues, value: string | number | boolean): void => {
       dispatch({ type: 'EDIT_FIELD', field, value });
     },
     [dispatch],
@@ -266,6 +266,37 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
                 handleEdit('terminalProfiles', JSON.stringify(newProfiles));
               }}
             />
+          </div>
+
+          {/* 隐藏 DSH 宿主终端开关 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <input
+              type="checkbox"
+              id="hideHostTerminal"
+              checked={values.hideHostTerminal}
+              disabled={!writable || isBusy}
+              onChange={(e) => handleEdit('hideHostTerminal', e.target.checked)}
+              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+            />
+            <label
+              htmlFor="hideHostTerminal"
+              style={{
+                fontSize: '13px',
+                fontWeight: 500,
+                color: 'var(--dsw-alias-label-primary)',
+                cursor: 'pointer',
+              }}
+            >
+              隐藏 DSH 宿主自带终端
+            </label>
+            <span
+              style={{
+                fontSize: '12px',
+                color: 'var(--dsw-alias-label-tertiary)',
+              }}
+            >
+              （开启后隐藏侧边栏 + 菜单里的"新建终端"，并拦截 Ctrl+` 快捷键改为打开本插件终端）
+            </span>
           </div>
 
           {/* 操作按钮 */}
