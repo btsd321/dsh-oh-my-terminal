@@ -166,17 +166,41 @@ export function apply(ctx: ClientContext): void {
     let currentBinding: ShortcutBinding | null = null;
     /** 当前已注册的 observeFixedInput disposer（绑定变化时重新注册） */
     let observeDispose: (() => void) | undefined;
+    /** 上次的 hideHostTerminal 值——变化时重新注册 */
+    let lastHideHostTerminal = _hideHostTerminal;
 
-    /** 注册/重新注册 fixed 命令 + observeFixedInput */
+    /**
+     * 注册/重新注册 fixed 命令 + observeFixedInput。
+     *
+     * 仅当 _hideHostTerminal=true 时注册 fixed 命令（阻塞 terminal.new）+
+     * observeFixedInput（拦截 Ctrl+` 打开本插件终端）。
+     * _hideHostTerminal=false 时注销两者——不拦截宿主终端，本插件终端仅通过
+     * 自己的 terminal-panel.toggle 快捷键（默认 Ctrl+Shift+`）打开。
+     */
     const register = (): void => {
+      /* hideHostTerminal=false：注销 fixed 命令 + observeFixedInput，不拦截宿主终端。
+       * 已注销时（lastHideHostTerminal=false）短路——catalog 频繁变化时不重复执行空操作 */
+      if (!_hideHostTerminal) {
+        if (lastHideHostTerminal === false) return;
+        fixedDispose?.();
+        observeDispose?.();
+        fixedDispose = undefined;
+        observeDispose = undefined;
+        currentBinding = null;
+        lastHideHostTerminal = false;
+        return;
+      }
+
+      /* hideHostTerminal=true：注册 fixed 命令 + observeFixedInput */
       const binding = readHostBinding();
       if (binding === null) return;
-      /* 绑定未变化时不重复注册 */
-      if (currentBinding !== null && currentBinding.code === binding.code && currentBinding.secondCode === binding.secondCode && currentBinding.modifiers.join('+') === binding.modifiers.join('+')) return;
+      /* 绑定未变化且 hideHostTerminal 未变化时不重复注册 */
+      if (lastHideHostTerminal === true && currentBinding !== null && currentBinding.code === binding.code && currentBinding.secondCode === binding.secondCode && currentBinding.modifiers.join('+') === binding.modifiers.join('+')) return;
       /* 注销旧的 */
       fixedDispose?.();
       observeDispose?.();
       currentBinding = binding;
+      lastHideHostTerminal = true;
 
       /* 注册 fixed 命令占用相同绑定，与 terminal.new 冲突 */
       try {
@@ -223,10 +247,14 @@ export function apply(ctx: ClientContext): void {
     register();
     const unsubCatalog = shortcuts.catalog.subscribe(() => { register(); });
 
+    /* 注册 hideHostTerminal 变化回调——配置变更时重新注册/注销 fixed 命令 */
+    setHideHostTerminalCallback(register);
+
     interceptCleanup = () => {
       unsubCatalog();
       fixedDispose?.();
       observeDispose?.();
+      setHideHostTerminalCallback(undefined);
     };
   });
   ctx.effect(() => () => { void interceptSeat.dispose(); interceptCleanup(); }, 'dsh-oh-my-terminal.host-terminal-intercept');
@@ -298,9 +326,26 @@ function setBetterSidebarService(service: BetterSidebarServiceLike | undefined):
 /** 是否隐藏 DSH 宿主终端——由 useConfig 从 /config 读取后设置，apply 的 keydown 拦截器读取 */
 let _hideHostTerminal = true;
 
-/** 内部设置器（TerminalPanel/TerminalSidebarTab 的 useConfig effect 调用） */
+/** hideHostTerminal 变化回调——apply 注册后，值变化时触发重新注册/注销 fixed 命令 */
+let _hideHostTerminalCallback: (() => void) | undefined;
+
+/**
+ * 内部设置器（TerminalPanel/TerminalSidebarTab 的 useConfig effect 调用）。
+ *
+ * 值变化时触发已注册的回调（apply 的拦截器注册的 register），使其重新注册/注销
+ * fixed 命令——hideHostTerminal=true 时注册拦截，false 时注销放行宿主终端。
+ *
+ * @param value - 新的 hideHostTerminal 值
+ */
 export function setHideHostTerminal(value: boolean): void {
+  const changed = _hideHostTerminal !== value;
   _hideHostTerminal = value;
+  if (changed) _hideHostTerminalCallback?.();
+}
+
+/** 注册/注销 hideHostTerminal 变化回调（apply 的拦截器调用） */
+function setHideHostTerminalCallback(cb: (() => void) | undefined): void {
+  _hideHostTerminalCallback = cb;
 }
 
 /**
