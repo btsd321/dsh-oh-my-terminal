@@ -21,8 +21,8 @@ import { DEFAULT_TOGGLE_SHORTCUT, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT } from 
 // （值/类型空间分离），测试里以 unknown 收窄后再断言最小形状
 const schema = Config as unknown as z;
 
-/** 配置表的五个字段名（与 Config schema 声明一致） */
-const FIELD_NAMES = ['fontFamily', 'fontSize', 'lineHeight', 'terminalProfiles', 'toggleShortcut'] as const;
+/** 配置表的六个字段名（与 Config schema 声明一致） */
+const FIELD_NAMES = ['fontFamily', 'fontSize', 'hideHostTerminal', 'lineHeight', 'terminalProfiles', 'toggleShortcut'] as const;
 
 /** object schema 的字段表（schemastery 实例的 dict 成员） */
 function field(name: string): { meta: Record<string, unknown> } | undefined {
@@ -38,7 +38,7 @@ function description(name: string): string {
 }
 
 describe('Config schema 形状', () => {
-  it('是 object schema 且声明五个字段', () => {
+  it('是 object schema 且声明六个字段', () => {
     assert.equal((schema as unknown as { type?: string }).type, 'object');
     const dict = (schema as unknown as { dict?: Record<string, unknown> }).dict;
     assert.deepEqual(Object.keys(dict ?? {}).sort(), [...FIELD_NAMES]);
@@ -74,12 +74,19 @@ describe('Config schema 形状', () => {
     assert.equal(node?.meta.volatile, true);
   });
 
-  it('五字段带默认值（空配置时回落），符合全字段给 default 的约束', () => {
+  it('hideHostTerminal 带 volatile 标记', () => {
+    const node = field('hideHostTerminal');
+    assert.notEqual(node, undefined);
+    assert.equal(node?.meta.volatile, true);
+  });
+
+  it('六字段带默认值（空配置时回落），符合全字段给 default 的约束', () => {
     assert.equal(field('toggleShortcut')?.meta.default, DEFAULT_TOGGLE_SHORTCUT);
     assert.equal(field('terminalProfiles')?.meta.default, '');
     assert.equal(field('fontFamily')?.meta.default, '');
     assert.equal(field('fontSize')?.meta.default, DEFAULT_FONT_SIZE);
     assert.equal(field('lineHeight')?.meta.default, DEFAULT_LINE_HEIGHT);
+    assert.equal(field('hideHostTerminal')?.meta.default, true);
   });
 
   it('terminalProfiles 默认值为空串（空表表示用启动探测结果）', () => {
@@ -88,7 +95,7 @@ describe('Config schema 形状', () => {
     assert.equal(field('terminalProfiles')?.meta.default, '');
   });
 
-  it('五字段带 description（GUI 表单的字段说明）', () => {
+  it('六字段带 description（GUI 表单的字段说明）', () => {
     for (const name of FIELD_NAMES) {
       assert.equal(typeof field(name)?.meta.description, 'string', `${name} 缺 description`);
     }
