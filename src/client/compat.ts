@@ -68,10 +68,20 @@ export interface BetterSidebarTabDescriptorLike {
    * 右端（+ 按钮右侧、面板关闭按钮左侧，右对齐）。让 tab 把自己的工具栏直接
    * 放进 tab 标签条，不在内容区顶部单独渲染头部行。
    *
-   * 签名与 DSH-better-sidebar 的 TabDescriptor.rightActions 一致：
-   * `(ctx, scope, state) => ReactNode`，三个独立参数（不是 props 对象）。
+   * 签名与 DSH-better-sidebar 的 TabDescriptor.rightActions 一致（PR #818）：
+   * `(ctx, scope, state, tab, paneId) => ReactNode`，五个独立参数（不是 props
+   * 对象）。`tab` 是当前渲染的打开实例——single: false 且有分栏时同一类型可同时
+   * 开多个实例、每个 pane 各渲染自己的 tab 栏，重启/关闭等操作必须针对 `tab`
+   * 而非「该类型的那个 tab」；`paneId` 是该 tab 栏所在的 pane（与 state.activePane
+   * 比较可知是否为聚焦 pane）。
    */
-  rightActions?: (ctx: unknown, scope: SessionScopeLike, state: unknown) => ReactNode;
+  rightActions?: (
+    ctx: unknown,
+    scope: SessionScopeLike,
+    state: unknown,
+    tab: { id: string; type: string; title: string },
+    paneId: string,
+  ) => ReactNode;
 }
 
 /** DSH-better-sidebar 注册服务的最小接口 */
