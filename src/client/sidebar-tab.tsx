@@ -41,7 +41,7 @@ import type { TerminalRenderParams } from './terminal-render.js';
 import { DropdownMenu } from './dropdown.js';
 import { SideList, instanceLabel } from './side-list.js';
 import { TerminalGlyph14, Plus12 } from './icons.js';
-import type { TabComponentPropsLike, BetterSidebarTabDescriptorLike } from './compat.js';
+import type { TabComponentPropsLike, BetterSidebarTabDescriptorLike, SessionScopeLike } from './compat.js';
 import { setHideHostTerminal } from '../client.js';
 
 /** 侧边栏终端 tab 在 + 菜单中的排序权重（排在内置 tab 之后） */
@@ -422,7 +422,7 @@ export function createTerminalTabDescriptor(supportsRightActions: boolean): Bett
         // 调用约定一致）。这里把它们组装成 TabComponentPropsLike 传给组件。
         rightActions: (
           ctx: unknown,
-          scope: { sessionId: string; cwd?: string },
+          scope: SessionScopeLike,
           _state: unknown,
           tab: { id: string; type: string; title: string },
           _paneId: string,
