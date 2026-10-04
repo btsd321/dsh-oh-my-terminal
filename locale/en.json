@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-oh-my-terminal",
+    "description": "Bottom terminal panel plugin for the DSH Web GUI — node-pty-driven multi-tab interactive terminal (Windows ConPTY / POSIX openpty)."
+  }
+}

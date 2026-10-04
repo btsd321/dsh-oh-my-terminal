@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-oh-my-terminal",
+    "description": "DSH Web GUI 底部终端面板插件——node-pty 驱动的多标签交互式终端（Windows ConPTY / POSIX openpty）"
+  }
+}
