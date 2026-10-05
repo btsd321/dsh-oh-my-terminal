@@ -84,15 +84,17 @@ AI agent 在本仓库工作时，除遵循上述规则外，还需注意：
 git checkout develop && git pull
 
 # 2. 为每个 agent 从 develop 创建独立 worktree + 特性分支
-git worktree add ../dsh-oh-my-terminal-agent1 -b feat/1-shortcut-extract
-git worktree add ../dsh-oh-my-terminal-agent2 -b refactor/2-persistence-cleanup
+#    worktree 放在仓库内部 .worktrees/ 目录下，不写到仓库外
+#    （写到仓库同级目录可能因权限不足而失败）
+git worktree add .worktrees/agent1 -b feat/1-shortcut-extract develop
+git worktree add .worktrees/agent2 -b refactor/2-persistence-cleanup develop
 ```
 
 每个 worktree 是一个独立目录，有自己的工作区、索引和分支引用，但共享 `.git` 对象库。agent 在各自的 worktree 目录里工作，互不干扰。
 
 **Agent 职责（在 worktree 中工作）：**
 
-1. 进入 Lead 指定的 worktree 目录（如 `../dsh-oh-my-terminal-agent1`）作为工作目录
+1. 进入 Lead 指定的 worktree 目录（如 `.worktrees/agent1`）作为工作目录
 2. 在该目录中完成所有编辑、typecheck、build、commit——**不要切换到其他分支**，该 worktree 已绑定你的特性分支
 3. 完成后向 Lead 报告 commit hash 与 worktree 路径，**不要自行 merge**
 
@@ -100,28 +102,29 @@ git worktree add ../dsh-oh-my-terminal-agent2 -b refactor/2-persistence-cleanup
 
 ```bash
 # 1. 在主工作区逐个 review 各 worktree 的提交
-git -C ../dsh-oh-my-terminal-agent1 log --oneline develop..HEAD
+git -C .worktrees/agent1 log --oneline develop..HEAD
 
-# 2. 确认无误后，在各 worktree 内 cherry-pick 或直接将分支 merge 回 develop
+# 2. 确认无误后，将各特性分支 merge 回 develop
 git checkout develop
 git merge --no-ff feat/1-shortcut-extract -m "merge: develop ← feat/1-shortcut-extract — 提取 shortcut 模块"
 git merge --no-ff refactor/2-persistence-cleanup -m "merge: develop ← refactor/2-persistence-cleanup — 清理持久化层"
 
-# 3. 合并完成后清理 worktree
-git worktree remove ../dsh-oh-my-terminal-agent1
-git worktree remove ../dsh-oh-my-terminal-agent2
+# 3. 合并完成后清理 worktree（先删工作目录，再删已合并的特性分支）
+git worktree remove .worktrees/agent1
+git worktree remove .worktrees/agent2
+git branch -d feat/1-shortcut-extract refactor/2-persistence-cleanup
 ```
 
 #### 1.4.3 worktree 约定
 
 | 约定 | 说明 |
 |------|------|
-| worktree 位置 | 放在仓库同级目录下，命名 `<repo>-<agent名>`，如 `../dsh-oh-my-terminal-terminal-fix` |
+| **worktree 位置** | 放在仓库内部 `.worktrees/` 目录下，命名 `.worktrees/<agent名>`。**不写到仓库外部**——仓库同级目录可能因权限不足导致 `git worktree add` 失败，仓库内部目录始终可读写 |
 | 分支来源 | 一律从 `develop` 最新 HEAD 创建，不从 master |
 | 单一 agent 归属 | 每个 worktree 只分配给一个 agent，不跨 agent 复用 |
 | node_modules | 新 worktree 需独立 `pnpm install`（worktree 不共享 node_modules） |
 | 清理 | 合并回 develop 后 Lead 立即 `git worktree remove` 清理，不残留 |
-| worktree 目录不提交 | worktree 本身是工作区镜像，已在 `.gitignore` 中排除，不得提交 |
+| worktree 目录不提交 | `.worktrees/` 已在 `.gitignore` 中排除，不得提交 |
 
 #### 1.4.4 何时用 worktree，何时不用
 
@@ -269,7 +272,7 @@ AI agent 在本仓库执行代码变更时，按以下清单自检：
 - [ ] 确认当前在正确的特性分支上（不在 master/develop 上直接改）
 - [ ] 确认特性分支从 develop 最新 HEAD 创建（不从 master 建分支）
 - [ ] 确认 Lead 分配的写作用户与其他 agent 不重叠
-- [ ] **Agent 团队协作时**：确认 Lead 已为自己分配独立 worktree，且当前工作目录在该 worktree 内（不在主工作区与他人共享）
+- [ ] **Agent 团队协作时**：确认 Lead 已为自己分配独立 worktree，且当前工作目录在该 worktree 内（如 `.worktrees/agent1`），不在主工作区与他人共享
 
 ### 工作中
 
@@ -285,6 +288,7 @@ AI agent 在本仓库执行代码变更时，按以下清单自检：
 - [ ] 向 Lead 报告完成状态、commit hash、验证结果
 - [ ] **不自行 merge 到 develop 或 master**
 - [ ] **不做 master → develop 的反向 merge**
+- [ ] **Agent 团队协作时**：报告 worktree 路径，由 Lead 负责合并后清理 worktree（不自行删除 worktree）
 
 ---
 
@@ -298,7 +302,9 @@ AI agent 在本仓库执行代码变更时，按以下清单自检：
 | master → develop 的 merge | 破坏单向合并规则，产生混乱历史 |
 | 特性分支之间互相 merge | 应通过 develop 中转 |
 | **Agent 团队协作时在共享工作区切换分支** | 共享工作区切分支会改变所有 agent 看到的文件，必须用 git worktree 隔离 |
+| **worktree 创建到仓库外部目录** | 仓库同级目录可能因权限不足导致 `git worktree add` 失败；worktree 必须放在仓库内部 `.worktrees/` 目录下 |
 | **worktree 未清理残留** | 合并回 develop 后 Lead 必须立即 `git worktree remove` |
+| **提交 `.worktrees/` 目录** | `.worktrees/` 是 worktree 临时工作区，已在 `.gitignore` 中排除 |
 | force push 已推送的分支 | 除非 Lead 明确要求重写历史 |
 | 使用 `git merge --squash` | 保留完整提交历史，merge 时用 `--no-ff` |
 | 提交含 `.claude/`、`.agents/`、`agent/`、`tasks/` 的文件 | 已在 .gitignore 中排除 |
