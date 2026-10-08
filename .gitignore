@@ -13,3 +13,8 @@ agents
 tasks/
 
 skills-lock.json
+
+# git worktree 产物（Agent 团队协作时为各 agent 创建的隔离工作区）——不提交
+.worktrees/
+
+.acl-recovery/
