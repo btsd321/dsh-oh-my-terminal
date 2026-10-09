@@ -150,7 +150,7 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
 .dshTermDropdownArrow:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshTermDropdownArrow:disabled{cursor:default;opacity:.45}
 .dshTermDropdownWrap{position:relative;display:inline-flex;flex:none}
-.dshTermDropdownMenu{position:absolute;top:100%;right:0;z-index:100;min-width:160px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);white-space:nowrap}
+.dshTermDropdownMenu{min-width:160px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);white-space:nowrap;scrollbar-width:thin}
 .dshTermDropdownItem{padding:5px 12px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);display:flex;align-items:center;gap:8px}
 .dshTermDropdownItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshTermDropdownSep{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1)}
