@@ -117,9 +117,8 @@ function readNamespaceValue(
  * 逐一调用清理。
  *
  * @param ctx - cordis 上下文（插件主入口的 apply 参数）
- * @param schema - 插件 Config 的 schemastery schema，用于注册 settings 命名空间。
- *   auto=false 下服务不会自动注册，缺了这一步 describe/mutate 恒报「命名空间
- *   不存在」，前端配置卡片静默不渲染（无报错、无入口）
+ * @param schema - 插件 Config 的 schemastery schema（保留兼容旧签名；新版
+ *   SettingsForms 靠 loader entry 自动发现命名空间，不消费此参数）
  * @param runtimeProfiles - 运行时终端配置表（探测+合并后的完整数组），传给 bridge
  *   供 describe 端点覆盖持久化的 terminalProfiles 值
  */
