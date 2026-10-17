@@ -40,29 +40,22 @@ export interface SettingsChannel {
   update(patch: Record<string, unknown>): Promise<void>;
 }
 
-/** settings 服务注册命名空间返回的 owner 能力面（按需探测，不同宿主缺项） */
-interface SettingsOwnerScope {
-  /** 读取本命名空间解析值 */
-  get?: () => unknown;
-  /** 合并写入本命名空间 user 层 */
-  update?: (patch: Record<string, unknown>) => Promise<void>;
-}
-
-/** settings 服务能力面（不同宿主版本暴露面不同，逐能力探测） */
+/**
+ * settings 服务能力面（不同宿主版本暴露面不同，逐能力探测）。
+ *
+ * dsh 0.2.0-rc.2 起的 SettingsForms 无运行时命名空间注册（register）方法——
+ * 命名空间由 cordis loader entries（configEditor.configuration()）按 entry id
+ * 自动发现。读写统一走服务级 describe/update，不再有 owner scope 二级句柄。
+ */
 interface SettingsFacade {
-  /** 新宿主可选能力：关闭自动写回；旧宿主（0.1.5 系）无此方法 */
+  /** 关闭自动写回；旧宿主（0.1.5 系）无此方法 */
   configure?: (options: { auto: boolean }, fiber?: unknown) => void;
   /**
-   * 注册命名空间 schema；重复注册抛 "already registered"。
-   * 可选——宿主 SettingsForms 靠 cordis loader entries 发现命名空间，
-   * 不一定提供此方法（如 0.1.7-rc.1 的 SettingsForms 无 register）。
+   * 列出所有命名空间的当前快照。
+   * 接受可选 { redactSecrets?: boolean }；不带该选项时默认 redactSecrets=true。
    */
-  register?: (ns: string, schema: unknown) => unknown;
-  /** 服务级读取命名空间解析值（register 缺失时的读回通道） */
-  get?: (ns: string) => unknown;
-  /** 服务级命名空间快照列表（register 与 get 都缺失时的兜底读回通道） */
-  describe?: () => Array<{ ns: string; value: unknown }>;
-  /** 服务级合并写入（owner scope 缺失时的落盘通道） */
+  describe?: (options?: { redactSecrets?: boolean }) => Array<{ ns: string; value: unknown }>;
+  /** 服务级合并写入（原子提交到指定命名空间的 user 层） */
   update?: (ns: string, patch: Record<string, unknown>) => Promise<void>;
 }
 
@@ -85,40 +78,29 @@ function isVolatileRef(value: unknown): value is { get(): unknown } {
 }
 
 /**
- * 逐能力探测读取命名空间解析值。
+ * 读取命名空间解析值。
  *
- * 优先 owner scope（注册即所得），其次服务级 get，最后 describe 扫描——
- * 三条通道读到的都是同一份解析值，差别只在宿主暴露面。返回前把 volatile
- * 字段的稳定引用解包成标量，调用方拿到的就是普通配置值。全部探测不到时
- * 返回 undefined，调用方按"读不到"降级，不伪造空配置。
+ * dsh 0.2.0-rc.2/0.2.1-rc.2 的 SettingsForms 无运行时 register 与服务级
+ * get——命名空间由 cordis loader entry id 自动发现，读取统一走
+ * describe().find(ns).value。返回前把 volatile 字段的稳定引用解包成标量，
+ * 调用方拿到的就是普通配置值。读不到时返回 undefined，调用方按"读不到"降级。
  *
  * @param facade - settings 服务实例
- * @param owner - register 返回的 owner scope（未注册成功时为 undefined）
  * @returns 命名空间解析值对象（volatile 字段已解包）；读不到时 undefined
  */
 function readNamespaceValue(
   facade: SettingsFacade,
-  owner: SettingsOwnerScope | undefined,
 ): Record<string, unknown> | undefined {
-  const candidates: unknown[] = [];
-  if (typeof owner?.get === 'function') {
-    candidates.push(owner.get());
-  } else {
-    if (typeof facade.get === 'function') candidates.push(facade.get(SETTINGS_NS));
-    if (typeof facade.describe === 'function') {
-      const descriptor = facade.describe().find((d) => d.ns === SETTINGS_NS);
-      if (descriptor !== undefined) candidates.push(descriptor.value);
-    }
-  }
-  for (const value of candidates) {
-    if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>)
-          .map(([key, item]) => [key, isVolatileRef(item) ? item.get() : item]),
-      );
-    }
-  }
-  return undefined;
+  if (typeof facade.describe !== 'function') return undefined;
+  const descriptor = facade.describe({ redactSecrets: false })
+    .find((d) => d.ns === SETTINGS_NS);
+  if (descriptor === undefined) return undefined;
+  const value = descriptor.value;
+  if (value === null || typeof value !== 'object') return undefined;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key, isVolatileRef(item) ? item.get() : item]),
+  );
 }
 
 /**
@@ -135,38 +117,38 @@ function readNamespaceValue(
  * 逐一调用清理。
  *
  * @param ctx - cordis 上下文（插件主入口的 apply 参数）
- * @param schema - 插件 Config 的 schemastery schema，用于注册 settings 命名空间。
- *   auto=false 下服务不会自动注册，缺了这一步 describe/mutate 恒报「命名空间
- *   不存在」，前端配置卡片静默不渲染（无报错、无入口）
+ * @param schema - 插件 Config 的 schemastery schema（保留兼容旧签名；新版
+ *   SettingsForms 靠 loader entry 自动发现命名空间，不消费此参数）
  * @param runtimeProfiles - 运行时终端配置表（探测+合并后的完整数组），传给 bridge
  *   供 describe 端点覆盖持久化的 terminalProfiles 值
  */
 /**
  * 注册 settings 命名空间（幂等，须先于任何 settings 读写）。
  *
- * 命名空间注册是 settings 服务注册表的唯一入口；首次配置落盘（prepareProfiles
- * 的首跑写回）等读写都依赖它——必须在 apply 早期调用本函数，晚于首次写回会
- * 报「namespace is not registered」（时序竞态）。重复注册（热重载、重复 apply、
- * 以及 registerSettingsIntegration 的兜底调用）抛 "already registered"，作为幂等
- * 情形吞掉；其余注册失败（如存储段损坏）如实上抛，不把失败包装成成功。
+ * dsh 0.2.0-rc.2/0.2.1-rc.2 的 SettingsForms 无运行时命名空间注册方法——
+ * 命名空间由 cordis loader entries 按 entry id（本插件的 `terminal-panel`）
+ * 自动发现，无需也不可运行时 register。本函数仅配置非自动模式（configure）
+ * 并在 settings 服务注入后触发就绪回调，交出同命名空间的读写通道——
+ * 首跑落盘/读回落定用它保证读写同一通道，避免 apply 期读 volatile、
+ * 写 settings 的通道错位。
  *
  * @param ctx - cordis 上下文
- * @param schema - 插件 Config 的 schemastery schema
- * @param onReady - settings 就绪回调，在命名空间注册（或确认宿主无 register）
- *   之后同步触发，入参是同命名空间的读写通道——首跑落盘/读回落定用它保证
- *   读写同一通道，避免 apply 期读 volatile、写 settings 的通道错位
+ * @param _schema - 插件 Config 的 schemastery schema（保留参数兼容旧签名；
+ *   新版 SettingsForms 靠 loader entry 自动发现命名空间，不消费此参数）
+ * @param onReady - settings 就绪回调，在 configure 之后同步触发，入参是同
+ *   命名空间的读写通道——read 走 describe().find(ns)，update 走 facade.update
  */
 export function registerSettingsNamespace(
   ctx: Context,
-  schema: unknown,
+  _schema: unknown,
   onReady?: (channel: SettingsChannel) => void,
 ): void {
-  // 注册命名空间 +（可选）关闭自动模式——软探测，服务不存在时不激活
+  // 配置非自动模式 + 就绪回调——软探测，服务不存在时不激活
   ctx.inject(['settings'], (sctx) => {
     const facade = sctx.settings as unknown as SettingsFacade;
 
     // configure 仅在宿主提供时调用——0.1.5 系宿主的 settings 服务没有该方法，
-    // 直接调用会 TypeError 并中断本回调的后续初始化（包括下面的命名空间注册）：
+    // 直接调用会 TypeError 并中断本回调的后续初始化：
     // - auto=true：settings 服务自动从 profile patch 读配置并写回插件 Config
     // - auto=false：插件自行管理配置（本插件的 Config 字段都是 volatile 引用，
     //   由 cordis loader 注入，无需 settings 服务二次写入）
@@ -181,27 +163,12 @@ export function registerSettingsNamespace(
       });
     }
 
-    // register 同样逐能力探测——宿主 SettingsForms 靠 cordis loader entries
-    // （configEditor.configuration()）发现命名空间，不一定提供 register 方法
-    // （0.1.7-rc.1 的 SettingsForms 无此方法）。方法不存在时跳过，不抛 TypeError；
-    // 方法存在时重复注册（热重载、重复 apply）抛 "already registered"，作为幂等
-    // 情形吞掉；其余注册失败（如存储段损坏）如实上抛，不把失败包装成成功。
-    let owner: SettingsOwnerScope | undefined;
-    if (typeof facade.register === 'function') {
-      try {
-        owner = facade.register(SETTINGS_NS, schema) as SettingsOwnerScope | undefined;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes('already registered')) throw error;
-      }
-    }
-
-    // 就绪回调在注册之后触发：回调内的任何读写都能看到已注册的命名空间
+    // 就绪回调在 configure 之后触发：回调内的任何读写都经服务级
+    // describe/update（命名空间已由 loader entry 自动发现）
     if (onReady !== undefined) {
       onReady({
-        read: () => readNamespaceValue(facade, owner),
+        read: () => readNamespaceValue(facade),
         update: (patch) => {
-          if (typeof owner?.update === 'function') return owner.update(patch);
           if (typeof facade.update === 'function') return facade.update(SETTINGS_NS, patch);
           return Promise.reject(new Error('settings 服务不提供 update，配置无法落盘'));
         },
