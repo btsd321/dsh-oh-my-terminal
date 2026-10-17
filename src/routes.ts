@@ -156,10 +156,14 @@ function isDefaultWorkspace(path: string): boolean {
 }
 
 /**
- * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 查 sessionId → 用户家目录兜底。
+ * 解析会话工作目录：优先客户端传的 cwd → workspaceRegistry 遍历查 sessionId → 用户家目录兜底。
  *
  * 默认工作区会话没有绑定具体项目目录，此时终端应在用户家目录（~）启动，
  * 而非 DSH 进程的 process.cwd()（可能是安装目录或其他非预期路径）。
+ *
+ * workspaceRegistry 的 `host` 属性是 private（0.2.0-rc.2/0.2.1-rc.2 均如此），
+ * 不能直接访问 `host.sessionPath()`。改为用公开的 `list()` 遍历工作区列表，
+ * 找到 `sessionIds` 包含目标 sessionId 的工作区，取其 `path`。
  *
  * @param cwd - 客户端传的工作目录
  * @param sessionId - 所属 DSH 会话 id（用于 workspaceRegistry 查工作区路径）
@@ -175,9 +179,12 @@ function resolveSessionCwd(
   if (typeof cwd === 'string' && cwd.length > 0 && !isDefaultWorkspace(cwd)) candidates.push(cwd);
   if (typeof sessionId === 'string' && sessionId.length > 0 && workspaceRegistry !== undefined) {
     try {
-      // workspaceRegistry.host.sessionPath(sessionId) 返回工作区路径——dsh-workspace 服务提供
-      const reg = workspaceRegistry as { host?: { sessionPath?: (id: string) => string | undefined } };
-      const path = reg.host?.sessionPath?.(sessionId);
+      // workspaceRegistry.list() 返回 Workspace[]，每个含 path 与 sessionIds
+      // （dsh-workspace 服务提供，0.2.0-rc.2/0.2.1-rc.2 公开 API 一致）
+      const reg = workspaceRegistry as { list?: () => Array<{ path?: string; sessionIds?: readonly string[] }> };
+      const workspaces = typeof reg.list === 'function' ? reg.list() : [];
+      const ws = workspaces.find(w => Array.isArray(w.sessionIds) && w.sessionIds.includes(sessionId));
+      const path = ws?.path;
       if (typeof path === 'string' && path.length > 0 && !isDefaultWorkspace(path)) candidates.push(path);
     } catch {
       /* workspace 服务不存在或未就绪——降级到下一候选 */
