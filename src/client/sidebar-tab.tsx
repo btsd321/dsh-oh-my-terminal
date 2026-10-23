@@ -388,7 +388,7 @@ function TerminalSidebarRightActions(props: TabComponentPropsLike): ReactElement
  * 描述符字段说明：
  * - id: 'dsh-oh-my-terminal'（与插件包名一致，避免与其他插件 tab 冲突）
  * - title: '终端'（中文，与独立模式 bar 标题一致）
- * - icon: TerminalGlyph14（着 DSH 的 --dsw-alias-label-primary 色，与
+ * - icon: TerminalGlyph14（着本插件内部文字令牌 --dshTermText 色，与
  *   DSH-better-sidebar 内置终端图标风格一致）
  * - single: true（单实例 tab——打开时聚焦已有而非重复创建）
  * - order: 40（排在 DSH-better-sidebar 内置 tab 之后：editor 10 / git 20 / subagent 30 / sidechat 35）
@@ -409,7 +409,7 @@ export function createTerminalTabDescriptor(supportsRightActions: boolean): Bett
       style: {
         display: 'inline-flex',
         alignItems: 'center',
-        color: 'var(--dsw-alias-label-primary)',
+        color: 'var(--dshTermText)',
       },
     }, TerminalGlyph14()),
     order: SIDEBAR_TAB_ORDER,

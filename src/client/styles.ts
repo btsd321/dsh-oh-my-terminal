@@ -112,55 +112,91 @@ export const TERM_THEME: Record<string, string> = {
 /* VSCode 风格底部面板样式（DSH 设计令牌；终端表面恒深色）。
  * 定义了所有面板样式类，包括下拉菜单、拆分终端、右侧终端列表。 */
 
-/** 面板全局 CSS 字符串（含所有 .dshTerm* 样式规则） */
-export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:Inter,var(--dsw-font-family)}
+/**
+ * 面板全局 CSS 字符串（含所有 .dshTerm* 样式规则）。
+ *
+ * 顶部先定义一组内部令牌（--dshTermSurface/Popup/Text/TextDim/Border/Hover），
+ * 让"表面"与"文字"成对取自同源令牌；其余规则只消费内部令牌，不再直接引用
+ * --dsw-specific-tip 或 --dsw-alias-label-secondary（缘由见令牌块上方注释）。
+ */
+export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方皮肤下"白底白字"） =====
+ * 现象：第三方皮肤（如 wallpaper-engine 的字体集）经宿主公开的
+ *       theme.overrideTokens() 把 --dsw-alias-label-secondary 覆写成 #fafafa
+ *       （由宿主 ThemePresenter 写成 body 内联变量），而本插件面板底色仍取
+ *       --dsw-specific-tip（浅色近白），两枚令牌来源不同、失去成对关系，
+ *       于是终端面板/下拉菜单出现"白底白字"（hover 换 primary 才可见）。
+ * 原因：--dsw-specific-tip 是宿主设计平台 tip 档、且当前宿主已无任何消费方的
+ *       孤儿令牌，不承载面板/菜单语义；--dsw-alias-label-secondary 是宿主公开、
+ *       可被第三方改写的角色令牌。表面与文字分别取自两枚可独立变动的令牌，
+ *       皮肤一改就失去对比，这是设计令牌未成对使用的问题。
+ * 对策：表面取宿主"面板/浮层"语义令牌，文字派生自 label-primary（与表面同源
+ *       的对比色），全插件只消费这组内部令牌、成对使用。
+ * 作用域：宿主 --dsw-* 令牌声明在 body（design-platform.css 的 body 与
+ *       body[data-ds-dark-theme]），而自定义属性的 var() 在其声明元素上求值——
+ *       只写 :root 时 html 取不到 body 上的令牌、会永远落入回退值，因此这里
+ *       同时声明到 body；:root 仅为 html 自身兜底。 */
+:root,body{
+/* 表面：大面积面板（宿主 Layer-1 不透明抬高面） */
+--dshTermSurface:var(--dsw-alias-bg-layer-1,#1e1f26);
+/* 表面：浮层/输入框（宿主菜单面），逐级回退到 overlay 与固定深色 */
+--dshTermPopup:var(--dsw-specific-menu,var(--dsw-alias-bg-overlay,#232324));
+/* 文字：派生自 primary，保证与表面同源对比；禁止单独依赖 secondary */
+--dshTermText:var(--dsw-alias-label-primary,#e8e8e8);
+/* 次级文字：由主文字色降低不透明度派生（Chromium 111+ 支持 color-mix） */
+--dshTermTextDim:color-mix(in srgb,var(--dshTermText) 78%,transparent);
+/* 边框：统一宿主 L1 边框 */
+--dshTermBorder:var(--dsw-alias-border-l1,rgba(255,255,255,.08));
+/* hover 底：统一宿主交互 hover 面 */
+--dshTermHover:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));
+}
+.dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:Inter,var(--dsw-font-family)}
 /* 兼容模式根容器：嵌入 DSH-better-sidebar 底部工作台 tab 内容区。
  * 覆盖 .dshTermRoot 的 position:fixed/bottom:0/z-index——这些是独立模式
  * 底部固定面板的定位，在 tab 内容区里会导致组件脱离文档流覆盖整个侧边栏。
  * 改为 position:relative 填满 tab 内容区（flex column 布局） */
-.dshTermSidebarRoot{position:relative;bottom:auto;z-index:auto;width:100%;height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--dsw-specific-tip)}
-.dshTermBar{box-sizing:border-box;width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--dsw-specific-tip);border-top:1px solid var(--dsw-alias-border-l1);cursor:pointer;color:var(--dsw-alias-label-primary);text-align:left;user-select:none;-webkit-user-select:none}
+.dshTermSidebarRoot{position:relative;bottom:auto;z-index:auto;width:100%;height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--dshTermSurface);color:var(--dshTermText)}
+.dshTermBar{box-sizing:border-box;width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--dshTermSurface);border-top:1px solid var(--dshTermBorder);cursor:pointer;color:var(--dshTermText);text-align:left;user-select:none;-webkit-user-select:none}
 .dshTermBar:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
 .dshTermBarLead{color:var(--dsw-alias-label-tertiary);flex:none;place-items:center;display:grid}
 .dshTermBarTitle{min-width:0;flex:none;font-size:13px;font-weight:500;line-height:24px}
 .dshTermBarState{min-width:0;flex:auto;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshTermBarActions{flex:none;align-items:center;gap:2px;display:flex}
 .dshTermBarAction{width:28px;height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:none;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
-.dshTermBarAction:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dshTermBarAction:hover:not(:disabled){background:var(--dshTermHover)}
 .dshTermBarAction:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
 .dshTermBarAction:disabled{cursor:default;opacity:.45}
 .dshTermBarChevron{width:28px;height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
-.dshTermBarChevron:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermPanel{box-sizing:border-box;width:100%;display:flex;flex-direction:column;background:var(--dsw-specific-tip);border-top:1px solid var(--dsw-alias-border-l1);overflow:hidden;animation:dshTermIn .16s ease-out}
+.dshTermBarChevron:hover{background:var(--dshTermHover);color:var(--dshTermText)}
+.dshTermPanel{box-sizing:border-box;width:100%;display:flex;flex-direction:column;background:var(--dshTermSurface);border-top:1px solid var(--dshTermBorder);overflow:hidden;color:var(--dshTermText);animation:dshTermIn .16s ease-out}
 @keyframes dshTermIn{from{transform:translateY(14px);opacity:.4}to{transform:none;opacity:1}}
 .dshTermResize{flex:none;height:6px;cursor:ns-resize;touch-action:none;position:relative}
 .dshTermResize:after{content:'';position:absolute;left:0;right:0;top:2px;height:2px;border-radius:2px;background:transparent;transition:background .15s}
-.dshTermResize:hover:after{background:var(--dsw-alias-interactive-bg-hover)}
-.dshTermHeader{flex:none;box-sizing:border-box;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip)}
+.dshTermResize:hover:after{background:var(--dshTermHover)}
+.dshTermHeader{flex:none;box-sizing:border-box;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--dshTermBorder);background:var(--dshTermSurface);color:var(--dshTermText)}
 .dshTermHeaderLead{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;margin-right:2px}
 .dshTermHeaderState{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}
 .dshTermHeaderActions{flex:none;display:flex;align-items:center;gap:2px;margin-left:auto}
 .dshTermNewWrap{display:inline-flex;align-items:center;flex:none;border-radius:7px}
 .dshTermNew{width:26px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
-.dshTermNew:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshTermNew:hover:not(:disabled){background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermNew:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
 .dshTermNew:disabled{cursor:default;opacity:.45}
-.dshTermNewSep{width:1px;height:16px;background:var(--dsw-alias-border-l1);flex:none}
+.dshTermNewSep{width:1px;height:16px;background:var(--dshTermBorder);flex:none}
 .dshTermDropdownArrow{width:16px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
-.dshTermDropdownArrow:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshTermDropdownArrow:hover:not(:disabled){background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermDropdownArrow:disabled{cursor:default;opacity:.45}
 .dshTermDropdownWrap{position:relative;display:inline-flex;flex:none}
-.dshTermDropdownMenu{min-width:160px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);white-space:nowrap;scrollbar-width:thin}
-.dshTermDropdownItem{padding:5px 12px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);display:flex;align-items:center;gap:8px}
-.dshTermDropdownItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermDropdownSep{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1)}
+.dshTermDropdownMenu{min-width:160px;padding:4px 0;background:var(--dshTermPopup);border:1px solid var(--dshTermBorder);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.3);color:var(--dshTermText);white-space:nowrap;scrollbar-width:thin}
+.dshTermDropdownItem{padding:5px 12px;cursor:pointer;font-size:12px;color:var(--dshTermTextDim);display:flex;align-items:center;gap:8px}
+.dshTermDropdownItem:hover{background:var(--dshTermHover);color:var(--dshTermText)}
+.dshTermDropdownSep{height:1px;margin:4px 8px;background:var(--dshTermBorder)}
 .dshTermCollapse{flex:none;display:grid;place-items:center;width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;padding:0}
-.dshTermCollapse:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshTermCollapse:hover{background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermBodyWithList{display:flex;flex-direction:row;flex:auto;min-height:0;position:relative}
-.dshTermTerminalArea{flex:1;min-width:0;position:relative;background:#1e2128;box-shadow:inset 0 1px 0 var(--dsw-alias-border-l1)}
+.dshTermTerminalArea{flex:1;min-width:0;position:relative;background:#1e2128;box-shadow:inset 0 1px 0 var(--dshTermBorder)}
 .dshTermSplitGroup{display:flex;flex-direction:row;height:100%;width:100%}
 .dshTermSplitPane{flex:1 1 0;min-width:${SPLIT_PANE_MIN_WIDTH}px;position:relative;overflow:hidden}
-.dshTermSplitDivider{width:1px;background:var(--dsw-alias-border-l1);flex:none;cursor:col-resize}
+.dshTermSplitDivider{width:1px;background:var(--dshTermBorder);flex:none;cursor:col-resize}
 .dshTermPane{position:absolute;inset:0;display:none;padding:4px 10px 8px;background:#1e2128}
 .dshTermPane.isActive{display:block}
 /* 拆分组内所有 pane 始终可见——拆分终端同组实例水平并排同时显示，
@@ -192,14 +228,14 @@ export const PANEL_CSS = `.dshTermRoot{position:fixed;bottom:0;z-index:50;font-f
  * 由 apply 函数在 body 加 .dshTermHideHostTerminal 类时生效 */
 body.dshTermHideHostTerminal [data-sidebar-right-guide-entry="terminal"]{display:none!important}
 .dshTermEmpty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#8b90a0;font-family:Inter,var(--dsw-font-family);font-size:12px}
-.dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
+.dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dshTermBorder);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dshTermEmptyBtn:hover{background:#343946}
-.dshTermSideList{width:${SIDE_LIST_DEFAULT_WIDTH}px;min-width:${SIDE_LIST_MIN_WIDTH}px;max-width:${SIDE_LIST_MAX_WIDTH}px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;background:var(--dsw-specific-tip);flex:none;overflow:hidden}
-.dshTermSideListHeader{flex:none;height:28px;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.dshTermSideList{width:${SIDE_LIST_DEFAULT_WIDTH}px;min-width:${SIDE_LIST_MIN_WIDTH}px;max-width:${SIDE_LIST_MAX_WIDTH}px;border-left:1px solid var(--dshTermBorder);display:flex;flex-direction:column;background:var(--dshTermSurface);color:var(--dshTermText);flex:none;overflow:hidden}
+.dshTermSideListHeader{flex:none;height:28px;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--dshTermBorder)}
 .dshTermSideListItems{flex:auto;overflow-y:auto;scrollbar-width:thin}
-.dshTermSideItem{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);position:relative;user-select:none;-webkit-user-select:none}
-.dshTermSideItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dshTermSideItem.isActive{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);border-left:2px solid var(--dsw-alias-label-primary)}
+.dshTermSideItem{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px;cursor:pointer;font-size:12px;color:var(--dshTermTextDim);position:relative;user-select:none;-webkit-user-select:none}
+.dshTermSideItem:hover{background:var(--dshTermHover);color:var(--dshTermText)}
+.dshTermSideItem.isActive{background:var(--dshTermHover);color:var(--dshTermText);border-left:2px solid var(--dshTermText)}
 .dshTermSideItem.isExited{opacity:.5}
 .dshTermSideItem.isExited .dshTermSideItemLabel{text-decoration:line-through;text-decoration-thickness:1px}
 .dshTermSideItemIcon{flex:none;display:grid;place-items:center;opacity:.7}
@@ -207,11 +243,11 @@ body.dshTermHideHostTerminal [data-sidebar-right-guide-entry="terminal"]{display
 .dshTermSideItemLabel{min-width:0;flex:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshTermSideItemClose{width:18px;height:18px;border:none;background:transparent;color:inherit;border-radius:4px;display:grid;place-items:center;cursor:pointer;padding:0;opacity:0;flex:none}
 .dshTermSideItem:hover .dshTermSideItemClose{opacity:.65}
-.dshTermSideItemClose:hover{opacity:1;background:var(--dsw-alias-interactive-bg-hover)}
-.dshTermSideItemInput{flex:1;min-width:0;height:20px;padding:0 4px;border:1px solid var(--dsw-alias-label-primary);border-radius:3px;background:var(--dsw-specific-tip);color:var(--dsw-alias-label-primary);font-size:12px;font-family:Inter,var(--dsw-font-family);outline:none}
-.dshTermContextMenu{position:fixed;z-index:200;min-width:120px;padding:4px 0;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3)}
-.dshTermContextMenuItem{padding:4px 12px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
-.dshTermContextMenuItem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshTermSideItemClose:hover{opacity:1;background:var(--dshTermHover)}
+.dshTermSideItemInput{flex:1;min-width:0;height:20px;padding:0 4px;border:1px solid var(--dshTermBorder);border-radius:3px;background:var(--dshTermPopup);color:var(--dshTermText);font-size:12px;font-family:Inter,var(--dsw-font-family);outline:none}
+.dshTermContextMenu{position:fixed;z-index:200;min-width:120px;padding:4px 0;background:var(--dshTermPopup);border:1px solid var(--dshTermBorder);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.3);color:var(--dshTermText)}
+.dshTermContextMenuItem{padding:4px 12px;cursor:pointer;font-size:12px;color:var(--dshTermTextDim);white-space:nowrap}
+.dshTermContextMenuItem:hover{background:var(--dshTermHover);color:var(--dshTermText)}
 body.dshTermResizing{cursor:ns-resize!important;user-select:none!important;-webkit-user-select:none!important}`;
 
 // —— CSS 注入（幂等） ——

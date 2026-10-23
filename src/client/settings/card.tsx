@@ -75,7 +75,7 @@ export function TerminalSettingsCard(props: TerminalSettingsCardProps): ReactEle
   /* summary 视图：返回摘要文本 */
   if (view === 'summary') {
     return (
-      <div style={{ fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' }}>
+      <div style={{ fontSize: '13px', color: 'var(--dshTermTextDim)' }}>
         终端面板配置 — 5 项设置
       </div>
     );
@@ -252,7 +252,7 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
               style={{
                 fontSize: '13px',
                 fontWeight: 500,
-                color: 'var(--dsw-alias-label-primary)',
+                color: 'var(--dshTermText)',
                 display: 'block',
                 marginBottom: '12px',
               }}
@@ -283,7 +283,7 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
               style={{
                 fontSize: '13px',
                 fontWeight: 500,
-                color: 'var(--dsw-alias-label-primary)',
+                color: 'var(--dshTermText)',
                 cursor: 'pointer',
               }}
             >
@@ -331,9 +331,9 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
                 fontSize: '13px',
                 fontWeight: 500,
                 borderRadius: '6px',
-                border: '1px solid var(--dsw-alias-border-l1)',
+                border: '1px solid var(--dshTermBorder)',
                 background: 'transparent',
-                color: 'var(--dsw-alias-label-secondary)',
+                color: 'var(--dshTermTextDim)',
                 cursor: isDirty && !isBusy ? 'pointer' : 'not-allowed',
                 opacity: isDirty && !isBusy ? 1 : 0.6,
               }}
@@ -395,7 +395,7 @@ function FormField(props: FormFieldProps): ReactElement {
         style={{
           fontSize: '13px',
           fontWeight: 500,
-          color: 'var(--dsw-alias-label-primary)',
+          color: 'var(--dshTermText)',
         }}
       >
         {label}
@@ -411,11 +411,11 @@ function FormField(props: FormFieldProps): ReactElement {
           padding: '8px 12px',
           fontSize: '13px',
           borderRadius: '6px',
-          border: '1px solid var(--dsw-alias-border-l1)',
+          border: '1px solid var(--dshTermBorder)',
           background: disabled
             ? 'var(--dsw-alias-interactive-bg-disabled)'
-            : 'var(--dsw-specific-tip)',
-          color: 'var(--dsw-alias-label-primary)',
+            : 'var(--dshTermPopup)',
+          color: 'var(--dshTermText)',
           outline: 'none',
         }}
       />
