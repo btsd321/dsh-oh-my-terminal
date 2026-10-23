@@ -174,7 +174,7 @@ export function ProfileTable(props: ProfileTableProps): ReactElement {
       {/* 表格容器 */}
       <div
         style={{
-          border: '1px solid var(--dsw-alias-border-l1)',
+          border: '1px solid var(--dshTermBorder)',
           borderRadius: '6px',
           overflow: 'hidden',
         }}
@@ -186,11 +186,11 @@ export function ProfileTable(props: ProfileTableProps): ReactElement {
             gridTemplateColumns: GRID_COLS,
             gap: '12px',
             padding: '10px 12px',
-            background: 'var(--dsw-alias-interactive-bg-hover)',
-            borderBottom: '1px solid var(--dsw-alias-border-l1)',
+            background: 'var(--dshTermHover)',
+            borderBottom: '1px solid var(--dshTermBorder)',
             fontSize: '12px',
             fontWeight: 600,
-            color: 'var(--dsw-alias-label-secondary)',
+            color: 'var(--dshTermTextDim)',
           }}
         >
           <div>类型</div>
@@ -247,9 +247,9 @@ export function ProfileTable(props: ProfileTableProps): ReactElement {
             fontSize: '13px',
             fontWeight: 500,
             borderRadius: '6px',
-            border: '1px solid var(--dsw-alias-border-l1)',
+            border: '1px solid var(--dshTermBorder)',
             background: 'transparent',
-            color: 'var(--dsw-alias-label-primary)',
+            color: 'var(--dshTermText)',
             cursor: disabled || loadingKinds ? 'not-allowed' : 'pointer',
             opacity: disabled || loadingKinds ? 0.6 : 1,
             display: 'flex',

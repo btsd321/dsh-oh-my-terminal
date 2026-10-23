@@ -85,13 +85,13 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
         gridTemplateColumns: GRID_COLS,
         gap: '12px',
         padding: '10px 12px',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
+        borderBottom: '1px solid var(--dshTermBorder)',
         fontSize: '13px',
         alignItems: 'center',
       }}
     >
       {/* 类型列 */}
-      <div style={{ color: 'var(--dsw-alias-label-primary)', fontWeight: 500 }}>
+      <div style={{ color: 'var(--dshTermText)', fontWeight: 500 }}>
         {kindLabel}
       </div>
 
@@ -117,9 +117,9 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
               padding: '4px 8px',
               fontSize: '13px',
               borderRadius: '4px',
-              border: '1px solid var(--dsw-alias-border-l1)',
-              background: 'var(--dsw-specific-tip)',
-              color: 'var(--dsw-alias-label-primary)',
+              border: '1px solid var(--dshTermBorder)',
+              background: 'var(--dshTermPopup)',
+              color: 'var(--dshTermText)',
               outline: 'none',
             }}
           />
@@ -130,7 +130,7 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
               padding: '4px 8px',
               cursor: disabled ? 'not-allowed' : 'pointer',
               borderRadius: '4px',
-              color: 'var(--dsw-alias-label-primary)',
+              color: 'var(--dshTermText)',
             }}
             title="点击编辑"
           >
@@ -163,9 +163,9 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
               padding: '4px 8px',
               fontSize: '13px',
               borderRadius: '4px',
-              border: '1px solid var(--dsw-alias-border-l1)',
-              background: 'var(--dsw-specific-tip)',
-              color: 'var(--dsw-alias-label-primary)',
+              border: '1px solid var(--dshTermBorder)',
+              background: 'var(--dshTermPopup)',
+              color: 'var(--dshTermText)',
               outline: 'none',
             }}
           />
@@ -177,7 +177,7 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
               cursor: canEditPath && !disabled ? 'pointer' : 'default',
               borderRadius: '4px',
               color: canEditPath
-                ? 'var(--dsw-alias-label-primary)'
+                ? 'var(--dshTermText)'
                 : 'var(--dsw-alias-label-tertiary)',
               fontFamily: 'monospace',
               fontSize: '12px',
@@ -204,11 +204,11 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
             background:
               profile.origin === 'auto'
                 ? 'var(--dsw-semantic-primary-bg)'
-                : 'var(--dsw-alias-interactive-bg-hover)',
+                : 'var(--dshTermHover)',
             color:
               profile.origin === 'auto'
                 ? 'var(--dsw-semantic-primary-text)'
-                : 'var(--dsw-alias-label-secondary)',
+                : 'var(--dshTermTextDim)',
           }}
         >
           {profile.origin === 'auto' ? '自动' : '手动'}
@@ -224,7 +224,7 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
             padding: '4px 12px',
             fontSize: '12px',
             borderRadius: '4px',
-            border: '1px solid var(--dsw-alias-border-l1)',
+            border: '1px solid var(--dshTermBorder)',
             background: 'transparent',
             color: canDelete
               ? 'var(--dsw-semantic-error-text)'
