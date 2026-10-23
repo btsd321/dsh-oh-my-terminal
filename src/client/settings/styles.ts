@@ -21,23 +21,26 @@ export const SETTINGS_STYLE_TAG = 'dsh-oh-my-terminal-settings-styles';
  * 配置表单全局 CSS 字符串。
  *
  * 包含表单布局、输入框、按钮、错误提示、冲突横幅的完整样式规则。
- * 所有颜色与间距使用 DSH 设计令牌（--dsw-* CSS 变量），确保在浅色/深色
- * 主题下自动适配。
+ *
+ * 颜色统一消费 PANEL_CSS 顶部定义的内部配对令牌（--dshTermText / TextDim /
+ * Popup / Border / Hover）：表面与文字同源成对，第三方皮肤改写宿主角色令牌
+ * 时也不会出现"白底白字"（详见 client/styles.ts 令牌块注释）。语义提示（警告/
+ * 错误/主按钮）仍用宿主成对的 semantic-* 令牌。
  *
  * 样式类命名约定：
  * - .dshTermSettings* 前缀与现有终端面板样式保持一致
  * - 语义化类名（Container/Field/Label/Input/Button/Banner）便于维护
  */
-export const SETTINGS_CARD_CSS = `.dshTermSettingsContainer{box-sizing:border-box;padding:20px;font-family:Inter,var(--dsw-font-family);color:var(--dsw-alias-label-primary)}
+export const SETTINGS_CARD_CSS = `.dshTermSettingsContainer{box-sizing:border-box;padding:20px;font-family:Inter,var(--dsw-font-family);color:var(--dshTermText)}
 .dshTermSettingsLoading{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
 .dshTermSettingsBanner{padding:12px 16px;margin-bottom:16px;border-radius:6px;font-size:13px;line-height:1.5}
 .dshTermSettingsBanner.isWarning{background:var(--dsw-semantic-warning-bg);border:1px solid var(--dsw-semantic-warning-border);color:var(--dsw-semantic-warning-text)}
 .dshTermSettingsBanner.isError{background:var(--dsw-semantic-error-bg);border:1px solid var(--dsw-semantic-error-border);color:var(--dsw-semantic-error-text)}
 .dshTermSettingsForm{display:flex;flex-direction:column;gap:16px}
 .dshTermSettingsField{display:flex;flex-direction:column;gap:6px}
-.dshTermSettingsLabel{font-size:13px;font-weight:500;color:var(--dsw-alias-label-primary)}
-.dshTermSettingsInput{box-sizing:border-box;padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-specific-tip);color:var(--dsw-alias-label-primary);font-family:inherit;outline:none;transition:border-color .15s}
-.dshTermSettingsInput:focus{border-color:var(--dsw-alias-label-primary)}
+.dshTermSettingsLabel{font-size:13px;font-weight:500;color:var(--dshTermText)}
+.dshTermSettingsInput{box-sizing:border-box;padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid var(--dshTermBorder);background:var(--dshTermPopup);color:var(--dshTermText);font-family:inherit;outline:none;transition:border-color .15s}
+.dshTermSettingsInput:focus{border-color:var(--dshTermText)}
 .dshTermSettingsInput:disabled{background:var(--dsw-alias-interactive-bg-disabled);color:var(--dsw-alias-label-disabled);cursor:not-allowed}
 .dshTermSettingsInput::placeholder{color:var(--dsw-alias-label-tertiary)}
 .dshTermSettingsActions{display:flex;gap:10px;margin-top:8px}
@@ -45,8 +48,8 @@ export const SETTINGS_CARD_CSS = `.dshTermSettingsContainer{box-sizing:border-bo
 .dshTermSettingsButton.isPrimary{background:var(--dsw-semantic-primary-bg);color:var(--dsw-semantic-primary-text)}
 .dshTermSettingsButton.isPrimary:hover:not(:disabled){opacity:.9}
 .dshTermSettingsButton.isPrimary:disabled{background:var(--dsw-alias-interactive-bg-disabled);color:var(--dsw-alias-label-disabled);cursor:not-allowed;opacity:.6}
-.dshTermSettingsButton.isSecondary{border:1px solid var(--dsw-alias-border-l1);background:transparent;color:var(--dsw-alias-label-secondary)}
-.dshTermSettingsButton.isSecondary:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dshTermSettingsButton.isSecondary{border:1px solid var(--dshTermBorder);background:transparent;color:var(--dshTermTextDim)}
+.dshTermSettingsButton.isSecondary:hover:not(:disabled){background:var(--dshTermHover)}
 .dshTermSettingsButton.isSecondary:disabled{opacity:.6;cursor:not-allowed}
 .dshTermSettingsReadonly{margin-top:8px;font-size:12px;color:var(--dsw-alias-label-tertiary);line-height:1.5}`;
 

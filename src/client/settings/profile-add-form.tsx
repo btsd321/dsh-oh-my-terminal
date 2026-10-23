@@ -58,8 +58,8 @@ export function AddProfileForm(props: AddProfileFormProps): ReactElement {
         gridTemplateColumns: GRID_COLS,
         gap: '12px',
         padding: '10px 12px',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-        background: 'var(--dsw-alias-interactive-bg-hover)',
+        borderBottom: '1px solid var(--dshTermBorder)',
+        background: 'var(--dshTermHover)',
         fontSize: '13px',
         alignItems: 'center',
       }}
@@ -73,9 +73,9 @@ export function AddProfileForm(props: AddProfileFormProps): ReactElement {
           padding: '4px 8px',
           fontSize: '13px',
           borderRadius: '4px',
-          border: '1px solid var(--dsw-alias-border-l1)',
-          background: 'var(--dsw-specific-tip)',
-          color: 'var(--dsw-alias-label-primary)',
+          border: '1px solid var(--dshTermBorder)',
+          background: 'var(--dshTermPopup)',
+          color: 'var(--dshTermText)',
           outline: 'none',
         }}
       >
@@ -101,9 +101,9 @@ export function AddProfileForm(props: AddProfileFormProps): ReactElement {
           padding: '4px 8px',
           fontSize: '13px',
           borderRadius: '4px',
-          border: '1px solid var(--dsw-alias-border-l1)',
-          background: 'var(--dsw-specific-tip)',
-          color: 'var(--dsw-alias-label-primary)',
+          border: '1px solid var(--dshTermBorder)',
+          background: 'var(--dshTermPopup)',
+          color: 'var(--dshTermText)',
           outline: 'none',
         }}
       />
@@ -123,9 +123,9 @@ export function AddProfileForm(props: AddProfileFormProps): ReactElement {
           padding: '4px 8px',
           fontSize: '13px',
           borderRadius: '4px',
-          border: '1px solid var(--dsw-alias-border-l1)',
-          background: 'var(--dsw-specific-tip)',
-          color: 'var(--dsw-alias-label-primary)',
+          border: '1px solid var(--dshTermBorder)',
+          background: 'var(--dshTermPopup)',
+          color: 'var(--dshTermText)',
           fontFamily: 'monospace',
           outline: 'none',
         }}
@@ -159,9 +159,9 @@ export function AddProfileForm(props: AddProfileFormProps): ReactElement {
             padding: '4px 10px',
             fontSize: '12px',
             borderRadius: '4px',
-            border: '1px solid var(--dsw-alias-border-l1)',
+            border: '1px solid var(--dshTermBorder)',
             background: 'transparent',
-            color: 'var(--dsw-alias-label-secondary)',
+            color: 'var(--dshTermTextDim)',
             cursor: disabled ? 'not-allowed' : 'pointer',
             opacity: disabled ? 0.6 : 1,
           }}
