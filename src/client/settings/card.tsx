@@ -163,7 +163,7 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
     <div style={{ padding: '20px', fontFamily: 'Inter, var(--dsw-font-family)' }}>
       {/* 加载状态 */}
       {status === 'loading' && (
-        <div style={{ color: 'var(--dsw-alias-label-tertiary)', fontSize: '13px' }}>
+        <div style={{ color: 'var(--dshTermTextMuted)', fontSize: '13px' }}>
           正在加载配置...
         </div>
       )}
@@ -292,7 +292,7 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
             <span
               style={{
                 fontSize: '12px',
-                color: 'var(--dsw-alias-label-tertiary)',
+                color: 'var(--dshTermTextMuted)',
               }}
             >
               （开启后隐藏侧边栏 + 菜单里的"新建终端"，并拦截 Ctrl+` 快捷键改为打开本插件终端）
@@ -348,7 +348,7 @@ function SettingsForm(props: SettingsFormProps): ReactElement {
               style={{
                 marginTop: '8px',
                 fontSize: '12px',
-                color: 'var(--dsw-alias-label-tertiary)',
+                color: 'var(--dshTermTextMuted)',
               }}
             >
               配置处于只读模式，无法保存更改

@@ -207,7 +207,7 @@ export function ProfileTable(props: ProfileTableProps): ReactElement {
               padding: '32px 12px',
               textAlign: 'center',
               fontSize: '13px',
-              color: 'var(--dsw-alias-label-tertiary)',
+              color: 'var(--dshTermTextMuted)',
             }}
           >
             暂无终端配置
