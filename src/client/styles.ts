@@ -126,11 +126,13 @@ export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方�
  *       --dsw-specific-tip（浅色近白），两枚令牌来源不同、失去成对关系，
  *       于是终端面板/下拉菜单出现"白底白字"（hover 换 primary 才可见）。
  * 原因：--dsw-specific-tip 是宿主设计平台 tip 档、且当前宿主已无任何消费方的
- *       孤儿令牌，不承载面板/菜单语义；--dsw-alias-label-secondary 是宿主公开、
- *       可被第三方改写的角色令牌。表面与文字分别取自两枚可独立变动的令牌，
- *       皮肤一改就失去对比，这是设计令牌未成对使用的问题。
- * 对策：表面取宿主"面板/浮层"语义令牌，文字派生自 label-primary（与表面同源
- *       的对比色），全插件只消费这组内部令牌、成对使用。
+ *       孤儿令牌，不承载面板/菜单语义；--dsw-alias-label-secondary / -tertiary
+ *       是宿主公开、可被第三方皮肤整体改写的角色令牌（皮肤常按深色底设计，
+ *       浅色面上一改就失去对比）。表面与文字分别取自可独立变动的令牌，是
+ *       设计令牌未成对使用的问题。
+ * 对策：表面取宿主"面板/浮层"语义令牌，文字（含次级/弱化档）一律派生自
+ *       label-primary（与表面同源的主文字对比色），全插件只消费这组内部令牌、
+ *       成对使用；不再直接引用 secondary / tertiary。
  * 作用域：宿主 --dsw-* 令牌声明在 body（design-platform.css 的 body 与
  *       body[data-ds-dark-theme]），而自定义属性的 var() 在其声明元素上求值——
  *       只写 :root 时 html 取不到 body 上的令牌、会永远落入回退值，因此这里
@@ -144,6 +146,8 @@ export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方�
 --dshTermText:var(--dsw-alias-label-primary,#e8e8e8);
 /* 次级文字：由主文字色降低不透明度派生（Chromium 111+ 支持 color-mix） */
 --dshTermTextDim:color-mix(in srgb,var(--dshTermText) 78%,transparent);
+/* 弱化文字（状态/图标/占位符/说明）：同源再降一档，避免皮肤改写 tertiary 后失配 */
+--dshTermTextMuted:color-mix(in srgb,var(--dshTermText) 62%,transparent);
 /* 边框：统一宿主 L1 边框 */
 --dshTermBorder:var(--dsw-alias-border-l1,rgba(255,255,255,.08));
 /* hover 底：统一宿主交互 hover 面 */
@@ -156,16 +160,16 @@ export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方�
  * 改为 position:relative 填满 tab 内容区（flex column 布局） */
 .dshTermSidebarRoot{position:relative;bottom:auto;z-index:auto;width:100%;height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--dshTermSurface);color:var(--dshTermText)}
 .dshTermBar{box-sizing:border-box;width:100%;height:34px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--dshTermSurface);border-top:1px solid var(--dshTermBorder);cursor:pointer;color:var(--dshTermText);text-align:left;user-select:none;-webkit-user-select:none}
-.dshTermBar:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
-.dshTermBarLead{color:var(--dsw-alias-label-tertiary);flex:none;place-items:center;display:grid}
+.dshTermBar:focus-visible{outline:2px solid var(--dshTermTextMuted);outline-offset:-2px}
+.dshTermBarLead{color:var(--dshTermTextMuted);flex:none;place-items:center;display:grid}
 .dshTermBarTitle{min-width:0;flex:none;font-size:13px;font-weight:500;line-height:24px}
-.dshTermBarState{min-width:0;flex:auto;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshTermBarState{min-width:0;flex:auto;color:var(--dshTermTextMuted);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshTermBarActions{flex:none;align-items:center;gap:2px;display:flex}
-.dshTermBarAction{width:28px;height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;background:0 0;border:none;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
+.dshTermBarAction{width:28px;height:28px;color:var(--dshTermTextMuted);cursor:pointer;background:0 0;border:none;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
 .dshTermBarAction:hover:not(:disabled){background:var(--dshTermHover)}
-.dshTermBarAction:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
+.dshTermBarAction:focus-visible{outline:2px solid var(--dshTermTextMuted);outline-offset:-2px}
 .dshTermBarAction:disabled{cursor:default;opacity:.45}
-.dshTermBarChevron{width:28px;height:28px;color:var(--dsw-alias-label-tertiary);cursor:pointer;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
+.dshTermBarChevron{width:28px;height:28px;color:var(--dshTermTextMuted);cursor:pointer;border-radius:999px;flex:none;place-items:center;padding:0;display:grid}
 .dshTermBarChevron:hover{background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermPanel{box-sizing:border-box;width:100%;display:flex;flex-direction:column;background:var(--dshTermSurface);border-top:1px solid var(--dshTermBorder);overflow:hidden;color:var(--dshTermText);animation:dshTermIn .16s ease-out}
 @keyframes dshTermIn{from{transform:translateY(14px);opacity:.4}to{transform:none;opacity:1}}
@@ -173,16 +177,16 @@ export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方�
 .dshTermResize:after{content:'';position:absolute;left:0;right:0;top:2px;height:2px;border-radius:2px;background:transparent;transition:background .15s}
 .dshTermResize:hover:after{background:var(--dshTermHover)}
 .dshTermHeader{flex:none;box-sizing:border-box;height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--dshTermBorder);background:var(--dshTermSurface);color:var(--dshTermText)}
-.dshTermHeaderLead{color:var(--dsw-alias-label-tertiary);flex:none;display:grid;place-items:center;margin-right:2px}
-.dshTermHeaderState{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}
+.dshTermHeaderLead{color:var(--dshTermTextMuted);flex:none;display:grid;place-items:center;margin-right:2px}
+.dshTermHeaderState{flex:1;min-width:0;color:var(--dshTermTextMuted);font-size:12px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}
 .dshTermHeaderActions{flex:none;display:flex;align-items:center;gap:2px;margin-left:auto}
 .dshTermNewWrap{display:inline-flex;align-items:center;flex:none;border-radius:7px}
-.dshTermNew{width:26px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
+.dshTermNew{width:26px;height:26px;flex:none;border:none;background:transparent;color:var(--dshTermTextMuted);display:grid;place-items:center;cursor:pointer;padding:0}
 .dshTermNew:hover:not(:disabled){background:var(--dshTermHover);color:var(--dshTermText)}
-.dshTermNew:focus-visible{outline:2px solid var(--dsw-alias-label-tertiary);outline-offset:-2px}
+.dshTermNew:focus-visible{outline:2px solid var(--dshTermTextMuted);outline-offset:-2px}
 .dshTermNew:disabled{cursor:default;opacity:.45}
 .dshTermNewSep{width:1px;height:16px;background:var(--dshTermBorder);flex:none}
-.dshTermDropdownArrow{width:16px;height:26px;flex:none;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);display:grid;place-items:center;cursor:pointer;padding:0}
+.dshTermDropdownArrow{width:16px;height:26px;flex:none;border:none;background:transparent;color:var(--dshTermTextMuted);display:grid;place-items:center;cursor:pointer;padding:0}
 .dshTermDropdownArrow:hover:not(:disabled){background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermDropdownArrow:disabled{cursor:default;opacity:.45}
 .dshTermDropdownWrap{position:relative;display:inline-flex;flex:none}
@@ -190,7 +194,7 @@ export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方�
 .dshTermDropdownItem{padding:5px 12px;cursor:pointer;font-size:12px;color:var(--dshTermTextDim);display:flex;align-items:center;gap:8px}
 .dshTermDropdownItem:hover{background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermDropdownSep{height:1px;margin:4px 8px;background:var(--dshTermBorder)}
-.dshTermCollapse{flex:none;display:grid;place-items:center;width:26px;height:26px;border:none;background:transparent;color:var(--dsw-alias-label-tertiary);border-radius:7px;cursor:pointer;padding:0}
+.dshTermCollapse{flex:none;display:grid;place-items:center;width:26px;height:26px;border:none;background:transparent;color:var(--dshTermTextMuted);border-radius:7px;cursor:pointer;padding:0}
 .dshTermCollapse:hover{background:var(--dshTermHover);color:var(--dshTermText)}
 .dshTermBodyWithList{display:flex;flex-direction:row;flex:auto;min-height:0;position:relative}
 .dshTermTerminalArea{flex:1;min-width:0;position:relative;background:#1e2128;box-shadow:inset 0 1px 0 var(--dshTermBorder)}
@@ -231,7 +235,7 @@ body.dshTermHideHostTerminal [data-sidebar-right-guide-entry="terminal"]{display
 .dshTermEmptyBtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dshTermBorder);background:#2a2e38;color:#e6e8ee;font-family:Inter,var(--dsw-font-family);font-size:12px;font-weight:500;cursor:pointer}
 .dshTermEmptyBtn:hover{background:#343946}
 .dshTermSideList{width:${SIDE_LIST_DEFAULT_WIDTH}px;min-width:${SIDE_LIST_MIN_WIDTH}px;max-width:${SIDE_LIST_MAX_WIDTH}px;border-left:1px solid var(--dshTermBorder);display:flex;flex-direction:column;background:var(--dshTermSurface);color:var(--dshTermText);flex:none;overflow:hidden}
-.dshTermSideListHeader{flex:none;height:28px;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--dshTermBorder)}
+.dshTermSideListHeader{flex:none;height:28px;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;color:var(--dshTermTextMuted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--dshTermBorder)}
 .dshTermSideListItems{flex:auto;overflow-y:auto;scrollbar-width:thin}
 .dshTermSideItem{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px;cursor:pointer;font-size:12px;color:var(--dshTermTextDim);position:relative;user-select:none;-webkit-user-select:none}
 .dshTermSideItem:hover{background:var(--dshTermHover);color:var(--dshTermText)}
@@ -239,7 +243,7 @@ body.dshTermHideHostTerminal [data-sidebar-right-guide-entry="terminal"]{display
 .dshTermSideItem.isExited{opacity:.5}
 .dshTermSideItem.isExited .dshTermSideItemLabel{text-decoration:line-through;text-decoration-thickness:1px}
 .dshTermSideItemIcon{flex:none;display:grid;place-items:center;opacity:.7}
-.dshTermSideItemPrefix{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,monospace;width:10px;text-align:center}
+.dshTermSideItemPrefix{flex:none;font-size:11px;color:var(--dshTermTextMuted);font-family:ui-monospace,monospace;width:10px;text-align:center}
 .dshTermSideItemLabel{min-width:0;flex:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshTermSideItemClose{width:18px;height:18px;border:none;background:transparent;color:inherit;border-radius:4px;display:grid;place-items:center;cursor:pointer;padding:0;opacity:0;flex:none}
 .dshTermSideItem:hover .dshTermSideItemClose{opacity:.65}

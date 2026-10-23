@@ -32,7 +32,7 @@ export const SETTINGS_STYLE_TAG = 'dsh-oh-my-terminal-settings-styles';
  * - 语义化类名（Container/Field/Label/Input/Button/Banner）便于维护
  */
 export const SETTINGS_CARD_CSS = `.dshTermSettingsContainer{box-sizing:border-box;padding:20px;font-family:Inter,var(--dsw-font-family);color:var(--dshTermText)}
-.dshTermSettingsLoading{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
+.dshTermSettingsLoading{color:var(--dshTermTextMuted);font-size:13px;line-height:1.5}
 .dshTermSettingsBanner{padding:12px 16px;margin-bottom:16px;border-radius:6px;font-size:13px;line-height:1.5}
 .dshTermSettingsBanner.isWarning{background:var(--dsw-semantic-warning-bg);border:1px solid var(--dsw-semantic-warning-border);color:var(--dsw-semantic-warning-text)}
 .dshTermSettingsBanner.isError{background:var(--dsw-semantic-error-bg);border:1px solid var(--dsw-semantic-error-border);color:var(--dsw-semantic-error-text)}
@@ -42,7 +42,7 @@ export const SETTINGS_CARD_CSS = `.dshTermSettingsContainer{box-sizing:border-bo
 .dshTermSettingsInput{box-sizing:border-box;padding:8px 12px;font-size:13px;border-radius:6px;border:1px solid var(--dshTermBorder);background:var(--dshTermPopup);color:var(--dshTermText);font-family:inherit;outline:none;transition:border-color .15s}
 .dshTermSettingsInput:focus{border-color:var(--dshTermText)}
 .dshTermSettingsInput:disabled{background:var(--dsw-alias-interactive-bg-disabled);color:var(--dsw-alias-label-disabled);cursor:not-allowed}
-.dshTermSettingsInput::placeholder{color:var(--dsw-alias-label-tertiary)}
+.dshTermSettingsInput::placeholder{color:var(--dshTermTextMuted)}
 .dshTermSettingsActions{display:flex;gap:10px;margin-top:8px}
 .dshTermSettingsButton{padding:8px 16px;font-size:13px;font-weight:500;border-radius:6px;border:none;font-family:inherit;cursor:pointer;transition:background .15s,opacity .15s}
 .dshTermSettingsButton.isPrimary{background:var(--dsw-semantic-primary-bg);color:var(--dsw-semantic-primary-text)}
@@ -51,7 +51,7 @@ export const SETTINGS_CARD_CSS = `.dshTermSettingsContainer{box-sizing:border-bo
 .dshTermSettingsButton.isSecondary{border:1px solid var(--dshTermBorder);background:transparent;color:var(--dshTermTextDim)}
 .dshTermSettingsButton.isSecondary:hover:not(:disabled){background:var(--dshTermHover)}
 .dshTermSettingsButton.isSecondary:disabled{opacity:.6;cursor:not-allowed}
-.dshTermSettingsReadonly{margin-top:8px;font-size:12px;color:var(--dsw-alias-label-tertiary);line-height:1.5}`;
+.dshTermSettingsReadonly{margin-top:8px;font-size:12px;color:var(--dshTermTextMuted);line-height:1.5}`;
 
 // —— CSS 注入（幂等） ——
 
