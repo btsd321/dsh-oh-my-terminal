@@ -178,7 +178,7 @@ export function ProfileRow(props: ProfileRowProps): ReactElement {
               borderRadius: '4px',
               color: canEditPath
                 ? 'var(--dshTermText)'
-                : 'var(--dsw-alias-label-tertiary)',
+                : 'var(--dshTermTextMuted)',
               fontFamily: 'monospace',
               fontSize: '12px',
               /* 水平滚动：长路径不换行，超出部分可拖动滚动条查看 */
