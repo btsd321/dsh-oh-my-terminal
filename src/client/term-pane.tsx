@@ -168,12 +168,16 @@ export function TermPane(props: TermPaneProps): ReactElement {
     if (term.element !== undefined) {
       term.element.addEventListener('mouseup', cb.copySelection);
       term.element.addEventListener('contextmenu', cb.pasteClipboard);
+      /* onNativePaste 必须用 capture 阶段：在 xterm 的 bubble 阶段 paste 监听器
+       * 之前触发，据此吞掉原生 paste（readText 成功后防双发） */
+      term.element.addEventListener('paste', cb.onNativePaste, true);
     }
 
     return () => {
       if (term.element !== undefined) {
         term.element.removeEventListener('mouseup', cb.copySelection);
         term.element.removeEventListener('contextmenu', cb.pasteClipboard);
+        term.element.removeEventListener('paste', cb.onNativePaste, true);
       }
       ws.onclose = null;
       ws.close();
