@@ -14,9 +14,10 @@
  *   右键菜单：其「粘贴」项喂给聚焦的 xterm textarea，xterm 自身的 paste 事件
  *   转发文本进 shell。Ctrl+V 在终端内各上下文都那样工作。
  * - 安全上下文下 readText 也可能失败（Electron webview sandbox 无 clipboard-read
- *   权限）：不调 preventDefault（同步）+ readText（异步）会因 preventDefault 无法
- *   撤销导致彻底无法粘贴。改用 capture 阶段 paste 监听器 + 短时标志去重——
- *   readText 成功后设标志吞掉原生 paste，失败则放行原生 paste 兜底。
+ *   权限）。故 Ctrl+Shift+V 不调 preventDefault 也不同步阻断——原生 paste 优先：
+ *   Chromium（Win/Linux）在 keydown 默认处理中同步派发原生 paste，由 xterm
+ *   handlePasteEvent 单发（无需剪贴板权限）；macOS 不映射该组合键无原生 paste，
+ *   延迟到宏任务用 readText 兜底。
  *
  * 架构位置：
  * - 纯函数模块，可独立单元测试
@@ -81,13 +82,11 @@ export interface ClipboardHandlers {
   /** Ctrl+Shift+C/V 自定义按键处理；返回 false 表示已拦截、不再传递给终端 */
   onCustomKey: (ev: KeyboardEvent) => boolean;
   /**
-   * Capture 阶段 paste 事件监听器。
+   * Capture 阶段 paste 事件观察者。
    *
-   * readText 成功后设标志，此监听器在 capture 阶段吞掉原生 paste 事件（防止
-   * xterm 内部 handlePasteEvent 与 term.paste() 双发）。readText 失败时不设标志，
-   * 原生 paste 正常到达 xterm → handlePasteEvent 单发兜底。
-   *
-   * 必须以 capture: true 挂到 term.element 上。
+   * 仅记录原生 paste 是否发生（供 Ctrl+Shift+V 的 setTimeout 判断是否需要
+   * readText 兜底），不拦截事件。必须以 capture: true 挂到 term.element 上——
+   * xterm 在 textarea 上的 paste 监听器会 stopPropagation，bubble 阶段收不到。
    */
   onNativePaste: (ev: ClipboardEvent) => void;
 }
@@ -104,17 +103,15 @@ export interface ClipboardHandlers {
  */
 export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
   /**
-   * readText 成功后设此标志；onNativePaste 在 capture 阶段据此吞掉原生 paste 事件。
+   * 本次 Ctrl+Shift+V keydown 之后是否观察到原生 paste 事件。
    *
-   * 不调 preventDefault（同步）+ readText（异步）的方案在 readText 失败时无法撤销
-   * preventDefault，导致 Electron webview sandbox（无 clipboard-read 权限）下完全
-   * 无法粘贴。改用标志 + capture 阶段监听器：
-   * - readText 成功 → term.paste(text) + 设标志 → 原生 paste 被吞 → 单发
-   * - readText 失败 → 不设标志 → 原生 paste 放行 → xterm handlePasteEvent 单发兜底
-   * - 不安全上下文 → 无 readText → 原生 paste 放行 → xterm 单发兜底
+   * Chromium（Win/Linux/ChromeOS，含 Electron webview）把 Ctrl+Shift+V 映射为
+   * PasteAndMatchStyle 编辑命令，在 keydown 默认处理中**同步**派发 paste；
+   * macOS 不映射该组合键，无原生 paste。keydown 时清零、onNativePaste 置位，
+   * keydown 之后的宏任务（setTimeout 0）中据此决定是否需要 readText 兜底——
+   * 判定发生在原生 paste 之后，没有「异步标志赶不上同步 paste」的竞争。
    */
-  let suppressNativePaste = false;
-  let suppressTimer: ReturnType<typeof setTimeout> | undefined;
+  let nativePasteObserved = false;
 
   /** 鼠标释放复制选区（仅左键） */
   const copySelection = (ev: MouseEvent): void => {
@@ -150,14 +147,14 @@ export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
    *
    * 双发原理：customKeyHandler 返回 false 时 xterm _keyDown 直接 return false，
    * 不调 ev.preventDefault()。Chromium 在 xterm textarea 上把 Ctrl+Shift+V 当作
-   * 「粘贴为纯文本」，触发原生 paste 事件，被 xterm 内部的 handlePasteEvent 再发
-   * 一次。若我们的 term.paste() 也发了，就双发。
+   * 「粘贴为纯文本」，触发原生 paste 事件，被 xterm 内部的 handlePasteEvent 处理。
+   * 若我们的 term.paste() 也发了，就双发。
    *
-   * 修复方案：v 分支不调 preventDefault（避免 readText 失败时阻断原生 paste 兜底），
-   * 改用 capture 阶段 paste 监听器（onNativePaste）+ 短时标志去重：
-   * readText 成功 → term.paste(text) + 设标志 → onNativePaste 吞掉原生 paste → 单发；
-   * readText 失败（Electron webview sandbox 无 clipboard-read 权限）→ 不设标志 →
-   * 原生 paste 放行 → xterm handlePasteEvent 单发兜底。 */
+   * 修复方案（原生优先）：v 分支不调 preventDefault、不同步调 readText——让原生
+   * paste 优先（Chromium Win/Linux 在 keydown 默认处理中同步派发 paste，由 xterm
+   * handlePasteEvent 单发，无需剪贴板权限）。keydown 后 setTimeout(0) 检查标志：
+   * 原生 paste 已发生 → 跳过（单发）；未发生（macOS 不映射该组合键）→ readText
+   * 兜底。原生 paste 与 term.paste 互斥，不会双发。 */
   const onCustomKey = (ev: KeyboardEvent): boolean => {
     if (ev.type !== 'keydown') return true;
     if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return true;
@@ -172,45 +169,33 @@ export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
       return false;
     }
     if (k === 'v') {
-      if (typeof navigator.clipboard?.readText === 'function') {
-        /* 不调 preventDefault：让原生 paste 事件正常触发。readText 成功后设标志，
-         * onNativePaste 在 capture 阶段据此吞掉原生 paste 事件 → 单发。
-         * readText 失败（webview 权限拒绝）时不设标志 → 原生 paste 放行 →
-         * xterm handlePasteEvent 单发兜底 */
+      /* 不调 preventDefault：原生 paste 若存在会在本 keydown 派发结束前同步到达，
+       * 由 xterm handlePasteEvent 单发（无需剪贴板权限，webview / 不安全上下文均可）。
+       * 仅当没有原生 paste（macOS）时才用 readText 兜底 */
+      nativePasteObserved = false;
+      setTimeout(() => {
+        if (nativePasteObserved) return; /* 原生 paste 已单发 */
+        if (typeof navigator.clipboard?.readText !== 'function') return; /* 无可兜底 */
         navigator.clipboard
           .readText()
-          .then((text: string) => {
-            if (text.length > 0) {
-              suppressNativePaste = true;
-              if (suppressTimer !== undefined) clearTimeout(suppressTimer);
-              /* 300ms 后自动清除标志，避免阻塞后续正常 paste（右键粘贴等） */
-              suppressTimer = setTimeout(() => { suppressNativePaste = false; }, 300);
-              term.paste(text);
-            }
-          })
-          .catch(() => { /* 权限拒绝：原生 paste 将兜底 */ });
-      }
-      /* 不安全上下文无 readText：原生 paste 正常触发 → xterm 单发 */
-      return false;
+          .then((text: string) => { if (text.length > 0) term.paste(text); })
+          .catch(() => { /* 无权限且无原生 paste（如 macOS webview）：Cmd+V 仍可用 */ });
+      }, 0);
+      return false; /* 保持 xterm 不处理该组合键（它本也不会 preventDefault） */
     }
     return true;
   };
 
   /**
-   * Capture 阶段 paste 监听器：readText 成功后吞掉原生 paste 事件，防双发。
+   * Capture 阶段 paste 观察者：仅记录原生 paste 是否发生，不拦截事件。
    *
    * xterm 在 textarea（target）和 element（bubble）各注册一个 paste 监听器，都在
-   * bubble 阶段。本监听器在 element 上以 capture: true 注册，先于 xterm 的监听器
-   * 触发。标志有效时 stopImmediatePropagation + preventDefault 吞掉事件，xterm 的
-   * handlePasteEvent 不再触发。标志无效时放行，xterm 正常处理。
+   * bubble 阶段，且 textarea 上的会 stopPropagation。本监听器在 element 上以
+   * capture: true 注册，先于 xterm 的监听器触发，仅置标志供 Ctrl+Shift+V 的
+   * setTimeout 判断是否需要 readText 兜底。
    */
-  const onNativePaste = (ev: ClipboardEvent): void => {
-    if (suppressNativePaste) {
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      suppressNativePaste = false;
-      if (suppressTimer !== undefined) { clearTimeout(suppressTimer); suppressTimer = undefined; }
-    }
+  const onNativePaste = (): void => {
+    nativePasteObserved = true;
   };
 
   return { copySelection, pasteClipboard, onCustomKey, onNativePaste };
