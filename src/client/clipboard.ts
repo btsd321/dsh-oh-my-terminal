@@ -74,7 +74,9 @@ export interface ClipboardHandlers {
   copySelection: (ev: MouseEvent) => void;
   /** 右键点击时粘贴剪贴板内容（不安全上下文下降级为浏览器原生右键菜单） */
   pasteClipboard: (ev: MouseEvent) => void;
-  /** Ctrl+Shift+C/V 自定义按键处理；返回 false 表示已拦截、不再传递给终端 */
+  /** Ctrl+Shift+C/V 自定义按键处理；返回 false 表示已拦截、不再传递给终端。
+   *  拦截时调用 ev.preventDefault() 阻断浏览器原生 paste/copy 事件，
+   *  避免 xterm 内部 handlePasteEvent 与我们的 term.paste() 双发 */
   onCustomKey: (ev: KeyboardEvent) => boolean;
 }
 
@@ -119,26 +121,44 @@ export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
 
   /* VS Code 风格 Ctrl+Shift+C / Ctrl+Shift+V——仅在 Async Clipboard API 存在时
    * （安全上下文）尝试；按键绝不到达 shell，故 Ctrl+C 保持 SIGINT、Ctrl+V 保持
-   * 原生粘贴。 */
+   * 原生粘贴。
+   *
+   * 关键：customKeyHandler 返回 false 时 xterm _keyDown 直接 return false，不调
+   * ev.preventDefault()。Chromium 在 xterm textarea 上把 Ctrl+Shift+V 当作「粘贴
+   * 为纯文本」，若不手动 preventDefault，浏览器会触发原生 paste 事件，被 xterm
+   * 内部的 handlePasteEvent 再发一次 → 文本粘贴两次。故 readText 可用时必须
+   * preventDefault 阻断原生 paste。
+   *
+   * 不安全上下文（远程 http / iframe 权限策略）：navigator.clipboard 不存在，
+   * 不 preventDefault——交给浏览器原生 paste 事件 → xterm handlePasteEvent 单发
+   * 兜底。Ctrl+Shift+C 同理调 preventDefault 阻断 Chrome 的 DevTools 审查元素。 */
   const onCustomKey = (ev: KeyboardEvent): boolean => {
     if (ev.type !== 'keydown') return true;
     if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return true;
     const k = ev.key.toLowerCase();
     if (k === 'c') {
-      if (typeof navigator.clipboard?.writeText === 'function' && term.hasSelection()) {
-        writeClipboard(term.getSelection());
-      }
+      /* 阻断浏览器默认动作（Chrome 下为 DevTools 审查元素）；xterm 自身不会对该
+       * 组合键 preventDefault */
+      ev.preventDefault();
+      /* writeClipboard 内含 legacyCopy 回落（execCommand），keydown 属用户手势，
+       * 不安全上下文下也能复制 */
+      if (term.hasSelection()) writeClipboard(term.getSelection());
       return false;
     }
     if (k === 'v') {
       if (typeof navigator.clipboard?.readText === 'function') {
+        /* 必须阻断：customKeyHandler 返回 false 时 xterm 不调 preventDefault，
+         * 浏览器会在 xterm textarea 上触发原生 paste，被 handlePasteEvent 再发
+         * 一次 → 双发 */
+        ev.preventDefault();
         navigator.clipboard
           .readText()
           .then((text: string) => {
             if (text.length > 0) term.paste(text);
           })
-          .catch(() => { /* 权限拒绝 */ });
+          .catch(() => { /* 权限拒绝：本次粘贴丢失，右键/Ctrl+V 仍可用 */ });
       }
+      /* 不安全上下文不 preventDefault：交给原生 paste 事件 → xterm 单发 */
       return false;
     }
     return true;
