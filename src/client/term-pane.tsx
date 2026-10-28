@@ -168,8 +168,9 @@ export function TermPane(props: TermPaneProps): ReactElement {
     if (term.element !== undefined) {
       term.element.addEventListener('mouseup', cb.copySelection);
       term.element.addEventListener('contextmenu', cb.pasteClipboard);
-      /* onNativePaste 必须用 capture 阶段：在 xterm 的 bubble 阶段 paste 监听器
-       * 之前触发，据此吞掉原生 paste（readText 成功后防双发） */
+      /* onNativePaste 必须用 capture 阶段：xterm 在 textarea 上的 paste 监听器
+       * 会 stopPropagation，bubble 阶段在 element 上收不到；它只观察原生 paste
+       * 是否发生，不拦截，供 Ctrl+Shift+V 判断是否需要 readText 兜底 */
       term.element.addEventListener('paste', cb.onNativePaste, true);
     }
 
