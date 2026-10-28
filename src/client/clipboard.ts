@@ -13,6 +13,10 @@
  * - 读剪贴板没有不安全上下文回落 API，故 navigator.clipboard 缺失时不吞原生
  *   右键菜单：其「粘贴」项喂给聚焦的 xterm textarea，xterm 自身的 paste 事件
  *   转发文本进 shell。Ctrl+V 在终端内各上下文都那样工作。
+ * - 安全上下文下 readText 也可能失败（Electron webview sandbox 无 clipboard-read
+ *   权限）：不调 preventDefault（同步）+ readText（异步）会因 preventDefault 无法
+ *   撤销导致彻底无法粘贴。改用 capture 阶段 paste 监听器 + 短时标志去重——
+ *   readText 成功后设标志吞掉原生 paste，失败则放行原生 paste 兜底。
  *
  * 架构位置：
  * - 纯函数模块，可独立单元测试
@@ -74,10 +78,18 @@ export interface ClipboardHandlers {
   copySelection: (ev: MouseEvent) => void;
   /** 右键点击时粘贴剪贴板内容（不安全上下文下降级为浏览器原生右键菜单） */
   pasteClipboard: (ev: MouseEvent) => void;
-  /** Ctrl+Shift+C/V 自定义按键处理；返回 false 表示已拦截、不再传递给终端。
-   *  拦截时调用 ev.preventDefault() 阻断浏览器原生 paste/copy 事件，
-   *  避免 xterm 内部 handlePasteEvent 与我们的 term.paste() 双发 */
+  /** Ctrl+Shift+C/V 自定义按键处理；返回 false 表示已拦截、不再传递给终端 */
   onCustomKey: (ev: KeyboardEvent) => boolean;
+  /**
+   * Capture 阶段 paste 事件监听器。
+   *
+   * readText 成功后设标志，此监听器在 capture 阶段吞掉原生 paste 事件（防止
+   * xterm 内部 handlePasteEvent 与 term.paste() 双发）。readText 失败时不设标志，
+   * 原生 paste 正常到达 xterm → handlePasteEvent 单发兜底。
+   *
+   * 必须以 capture: true 挂到 term.element 上。
+   */
+  onNativePaste: (ev: ClipboardEvent) => void;
 }
 
 /**
@@ -91,6 +103,19 @@ export interface ClipboardHandlers {
  * @returns 三个剪贴板事件处理函数组成的对象
  */
 export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
+  /**
+   * readText 成功后设此标志；onNativePaste 在 capture 阶段据此吞掉原生 paste 事件。
+   *
+   * 不调 preventDefault（同步）+ readText（异步）的方案在 readText 失败时无法撤销
+   * preventDefault，导致 Electron webview sandbox（无 clipboard-read 权限）下完全
+   * 无法粘贴。改用标志 + capture 阶段监听器：
+   * - readText 成功 → term.paste(text) + 设标志 → 原生 paste 被吞 → 单发
+   * - readText 失败 → 不设标志 → 原生 paste 放行 → xterm handlePasteEvent 单发兜底
+   * - 不安全上下文 → 无 readText → 原生 paste 放行 → xterm 单发兜底
+   */
+  let suppressNativePaste = false;
+  let suppressTimer: ReturnType<typeof setTimeout> | undefined;
+
   /** 鼠标释放复制选区（仅左键） */
   const copySelection = (ev: MouseEvent): void => {
     /* 仅左键释放：右键是粘贴，不重复复制 */
@@ -123,15 +148,16 @@ export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
    * （安全上下文）尝试；按键绝不到达 shell，故 Ctrl+C 保持 SIGINT、Ctrl+V 保持
    * 原生粘贴。
    *
-   * 关键：customKeyHandler 返回 false 时 xterm _keyDown 直接 return false，不调
-   * ev.preventDefault()。Chromium 在 xterm textarea 上把 Ctrl+Shift+V 当作「粘贴
-   * 为纯文本」，若不手动 preventDefault，浏览器会触发原生 paste 事件，被 xterm
-   * 内部的 handlePasteEvent 再发一次 → 文本粘贴两次。故 readText 可用时必须
-   * preventDefault 阻断原生 paste。
+   * 双发原理：customKeyHandler 返回 false 时 xterm _keyDown 直接 return false，
+   * 不调 ev.preventDefault()。Chromium 在 xterm textarea 上把 Ctrl+Shift+V 当作
+   * 「粘贴为纯文本」，触发原生 paste 事件，被 xterm 内部的 handlePasteEvent 再发
+   * 一次。若我们的 term.paste() 也发了，就双发。
    *
-   * 不安全上下文（远程 http / iframe 权限策略）：navigator.clipboard 不存在，
-   * 不 preventDefault——交给浏览器原生 paste 事件 → xterm handlePasteEvent 单发
-   * 兜底。Ctrl+Shift+C 同理调 preventDefault 阻断 Chrome 的 DevTools 审查元素。 */
+   * 修复方案：v 分支不调 preventDefault（避免 readText 失败时阻断原生 paste 兜底），
+   * 改用 capture 阶段 paste 监听器（onNativePaste）+ 短时标志去重：
+   * readText 成功 → term.paste(text) + 设标志 → onNativePaste 吞掉原生 paste → 单发；
+   * readText 失败（Electron webview sandbox 无 clipboard-read 权限）→ 不设标志 →
+   * 原生 paste 放行 → xterm handlePasteEvent 单发兜底。 */
   const onCustomKey = (ev: KeyboardEvent): boolean => {
     if (ev.type !== 'keydown') return true;
     if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return true;
@@ -147,22 +173,45 @@ export function createClipboardHandlers(term: Terminal): ClipboardHandlers {
     }
     if (k === 'v') {
       if (typeof navigator.clipboard?.readText === 'function') {
-        /* 必须阻断：customKeyHandler 返回 false 时 xterm 不调 preventDefault，
-         * 浏览器会在 xterm textarea 上触发原生 paste，被 handlePasteEvent 再发
-         * 一次 → 双发 */
-        ev.preventDefault();
+        /* 不调 preventDefault：让原生 paste 事件正常触发。readText 成功后设标志，
+         * onNativePaste 在 capture 阶段据此吞掉原生 paste 事件 → 单发。
+         * readText 失败（webview 权限拒绝）时不设标志 → 原生 paste 放行 →
+         * xterm handlePasteEvent 单发兜底 */
         navigator.clipboard
           .readText()
           .then((text: string) => {
-            if (text.length > 0) term.paste(text);
+            if (text.length > 0) {
+              suppressNativePaste = true;
+              if (suppressTimer !== undefined) clearTimeout(suppressTimer);
+              /* 300ms 后自动清除标志，避免阻塞后续正常 paste（右键粘贴等） */
+              suppressTimer = setTimeout(() => { suppressNativePaste = false; }, 300);
+              term.paste(text);
+            }
           })
-          .catch(() => { /* 权限拒绝：本次粘贴丢失，右键/Ctrl+V 仍可用 */ });
+          .catch(() => { /* 权限拒绝：原生 paste 将兜底 */ });
       }
-      /* 不安全上下文不 preventDefault：交给原生 paste 事件 → xterm 单发 */
+      /* 不安全上下文无 readText：原生 paste 正常触发 → xterm 单发 */
       return false;
     }
     return true;
   };
 
-  return { copySelection, pasteClipboard, onCustomKey };
+  /**
+   * Capture 阶段 paste 监听器：readText 成功后吞掉原生 paste 事件，防双发。
+   *
+   * xterm 在 textarea（target）和 element（bubble）各注册一个 paste 监听器，都在
+   * bubble 阶段。本监听器在 element 上以 capture: true 注册，先于 xterm 的监听器
+   * 触发。标志有效时 stopImmediatePropagation + preventDefault 吞掉事件，xterm 的
+   * handlePasteEvent 不再触发。标志无效时放行，xterm 正常处理。
+   */
+  const onNativePaste = (ev: ClipboardEvent): void => {
+    if (suppressNativePaste) {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      suppressNativePaste = false;
+      if (suppressTimer !== undefined) { clearTimeout(suppressTimer); suppressTimer = undefined; }
+    }
+  };
+
+  return { copySelection, pasteClipboard, onCustomKey, onNativePaste };
 }
