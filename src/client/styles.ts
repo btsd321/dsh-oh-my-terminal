@@ -154,6 +154,9 @@ export const PANEL_CSS = `/* ===== 内部表面/文字令牌（修复第三方�
 --dshTermHover:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));
 }
 .dshTermRoot{position:fixed;bottom:0;z-index:50;font-family:Inter,var(--dsw-font-family)}
+/* 独立模式的槽内零尺寸锚点：可见面板 Portal 到 body，锚点只用于定位对话滚动
+ * 容器；display:none 让它不占位（flex 布局里也不产生 gap） */
+.dshTermAnchor{display:none}
 /* 兼容模式根容器：嵌入 DSH-better-sidebar 底部工作台 tab 内容区。
  * 覆盖 .dshTermRoot 的 position:fixed/bottom:0/z-index——这些是独立模式
  * 底部固定面板的定位，在 tab 内容区里会导致组件脱离文档流覆盖整个侧边栏。

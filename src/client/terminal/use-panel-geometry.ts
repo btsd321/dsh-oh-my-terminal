@@ -9,6 +9,8 @@
  * usePanelGeometry：对话列几何测量，面板宽度对齐对话列，并向滚动容器注入 paddingBottom。
  * 终端 bar/panel 固定在视口底部；对话滚动容器获得等于面板高度的 paddingBottom，
  * 使 composer 座位与上方 dock 条目整体上移，不被 fixed 终端面板遮挡。
+ * 可见面板由 client.tsx Portal 到 body（绕开 composerSeat 的 transform 包含块），
+ * 因此本 Hook 以留在 dock 槽里的零尺寸锚点定位滚动容器，以面板根读高度。
  */
 
 import * as React from 'react';
@@ -99,32 +101,44 @@ export interface PanelGeometry {
  * overlay 模式下 composerSeat 是 absolute，marginBottom 不改锚点；paddingBottom
  * 对 sticky/absolute 子元素都生效。
  *
- * @param rootRef - 面板根元素 ref（测量起点）
+ * **为什么锚点与面板根分开**：可见的面板经 `createPortal` 挂到 document.body
+ * （composerSeat 的 `will-change: transform` 会让它成为 fixed 后代的包含块，
+ * 面板留在 dock 槽里就会以 composerSeat 为基准错位），因此面板根已不在对话
+ * DOM 内——测量起点改用留在槽内的零尺寸锚点，高度仍取面板根。
+ *
+ * @param anchorRef - 留在 dock 槽内的锚点 ref（用于定位对话滚动容器）
+ * @param rootRef - 面板根元素 ref（已 Portal 到 body，用于读取面板高度）
  * @returns 对话列几何 state
  */
-export function usePanelGeometry(rootRef: React.RefObject<HTMLDivElement | null>): PanelGeometry {
+export function usePanelGeometry(
+  anchorRef: React.RefObject<HTMLElement | null>,
+  rootRef: React.RefObject<HTMLElement | null>,
+): PanelGeometry {
   const { useLayoutEffect, useState } = React;
   const [geo, setGeo] = useState<ConversationGeo>({ left: 0, width: window.innerWidth });
 
   useLayoutEffect(() => {
-    const rootEl = rootRef.current;
-    if (rootEl === null) return;
-    const findScrollBody = (): HTMLElement | null => {
-      return rootEl.closest('[data-conversation-scroll]');
-    };
-    let scrollBody: HTMLElement | null = null;
+    const anchorEl = anchorRef.current;
+    if (anchorEl === null) return;
+    const scrollBody = anchorEl.closest<HTMLElement>('[data-conversation-scroll]');
     const measure = (): void => {
       if (scrollBody !== null) {
         const r = scrollBody.getBoundingClientRect();
-        setGeo({ left: r.left, width: r.width });
+        /* 只在几何真的变化时提交 state：ResizeObserver 的回调里还会写
+         * paddingBottom，不设这道闸每轮都会拿新对象触发一次无意义重渲染 */
+        setGeo((prev) => (prev.left === r.left && prev.width === r.width
+          ? prev
+          : { left: r.left, width: r.width }));
       }
-      const h = Math.round(rootEl.getBoundingClientRect().height);
+      const rootEl = rootRef.current;
+      const h = rootEl === null ? 0 : Math.round(rootEl.getBoundingClientRect().height);
       if (scrollBody !== null) scrollBody.style.paddingBottom = h > 0 ? h + 'px' : '';
     };
-    scrollBody = findScrollBody();
     const ro = new ResizeObserver(measure);
     if (scrollBody !== null) ro.observe(scrollBody);
-    ro.observe(rootEl);
+    /* Portal 子节点的 ref 在布局 effect 之前就已挂好，这里必然可观察；
+     * 高度变化（展开/收起/拖拽调高）靠它触发 paddingBottom 重算 */
+    if (rootRef.current !== null) ro.observe(rootRef.current);
     window.addEventListener('resize', measure);
     measure();
     return () => {
@@ -132,7 +146,7 @@ export function usePanelGeometry(rootRef: React.RefObject<HTMLDivElement | null>
       window.removeEventListener('resize', measure);
       if (scrollBody !== null) scrollBody.style.paddingBottom = '';
     };
-  }, [rootRef]);
+  }, [anchorRef, rootRef]);
 
   return { geo };
 }
