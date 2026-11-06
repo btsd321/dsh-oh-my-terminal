@@ -36,6 +36,7 @@
 
 import * as React from 'react';
 import type { ReactElement } from 'react';
+import { createPortal } from 'react-dom';
 import type { Context } from '@deepseek-ai/cordis';
 // import type：构建期擦除，浏览器 bundle 不携带对官方包的运行时引用——
 // shortcuts 服务实例由宿主运行期提供，插件只消费其方法与类型
@@ -492,10 +493,15 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
   /* —— 拖拽调高（高度 state + localStorage 持久化） —— */
   const { height, startResize } = usePanelHeight();
 
-  /** 根元素 ref（测量几何用） */
+  /**
+   * 槽内锚点 ref（测量几何用）——可见面板 Portal 到 body 后已不在对话 DOM 内，
+   * 由这个零尺寸锚点定位对话滚动容器。
+   */
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  /** 面板根元素 ref（读取面板高度，供 scrollBody 的 paddingBottom 使用） */
   const rootRef = useRef<HTMLDivElement | null>(null);
   /* —— 对话列几何测量 + scrollBody paddingBottom —— */
-  const { geo } = usePanelGeometry(rootRef);
+  const { geo } = usePanelGeometry(anchorRef, rootRef);
 
   /* —— 统一状态管理（useReducer 封装 + 按会话过滤恢复） —— */
   const { state, dispatch } = useTerminalState(sessionId);
@@ -577,7 +583,20 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
     dispatch({ type: 'SET_ACTIVE', id: instanceId });
   }, [dispatch]);
 
-  return React.createElement(
+  /**
+   * 可见面板根：`.dshTermRoot` 是 `position: fixed`，必须脱离对话 DOM 挂到
+   * document.body 才以视口为基准定位——DSH 的 composerSeat 带
+   * `will-change: transform`（ui-conversation 的 ConversationRoot.module.css），
+   * 会把自己变成 fixed 后代的包含块；面板留在 `conversation.input.dock` 槽里
+   * 就会贴着 composer 而非视口底部，`left`/`width` 也会在 composer 坐标系里
+   * 再叠加一次对话列偏移，表现为面板/折叠条错位。这也是 ui-conversation
+   * README 对 dock 槽参与者的硬要求（fixed 浮层必须 portal 到 body）。
+   *
+   * 代价：Portal 后不再继承宿主 `data-phase='settling'` 时 composerSeat 的
+   * `visibility:hidden`，会话回放期间折叠条会照常显示——面板是插件自有 chrome，
+   * 不依赖宿主布局，这里接受该差异。
+   */
+  const root = React.createElement(
     'div',
     {
       className: 'dshTermRoot',
@@ -711,6 +730,23 @@ function TerminalPanel(props: TerminalPanelProps): ReactElement {
         ),
         React.createElement('span', { className: 'dshTermBarChevron', 'aria-hidden': true }, ChevronUp14()),
       ),
+  );
+
+  /* 槽内零尺寸锚点：只用于定位对话滚动容器（几何测量 + paddingBottom），
+   * 不参与布局（display:none 的 flex 项不占位、不产生 gap） */
+  const anchor = React.createElement('div', {
+    className: 'dshTermAnchor',
+    ref: anchorRef,
+    'aria-hidden': true,
+  });
+
+  /* 浏览器半只在 dsh Web 页面里挂载，document 必然存在；槽内只留锚点，
+   * 可见面板整体 Portal 到 body */
+  return React.createElement(
+    React.Fragment,
+    null,
+    anchor,
+    createPortal(root, document.body),
   );
 }
 
