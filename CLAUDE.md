@@ -192,6 +192,7 @@ src/
 - **xterm.css**：构建时从 `node_modules/@xterm/xterm/css/xterm.css` 复制到 `lib/xterm.css`，由宿主半 serve
 - **终端数据绝不进日志**：pty 输出与 WebSocket 数据帧是用户会话内容，不写日志
 - **CSS overflow:hidden 陷阱**：包含 `position:absolute` 浮层（如下拉菜单）的容器不能设 `overflow:hidden`，否则浮层被裁剪不可见
+- **composer 是 fixed 后代的包含块**：对话期 DSH 的 `.composerSeat` 带 `will-change: transform`（`ui-conversation/src/client/skeleton/ConversationRoot.module.css`），会让 `conversation.input.dock` 槽内的 `position:fixed` 以 composer 为基准而非视口：面板不再贴窗口底边，`left`/`width` 也按视口算的值叠加到 composer 偏移上，表现为折叠条/面板错位、被窗口下沿裁掉；新会话（hero 态，无 transform）反而正常，于是现象像"时好时坏"。独立模式的面板必须 `createPortal` 到 `document.body`，几何测量改用留在槽内的 `.dshTermAnchor` 零尺寸锚点；这也是 `ui-conversation` README 对 dock 槽参与者的硬要求（fixed 浮层一律 portal 到 body）。
 - **Windows 上 spawn 必须给完整路径**：node-pty 的 `spawn` 在 Windows 上**不做 PATH/PATHEXT 查找**，传裸命令名（`pwsh`、`cmd`、`bash`）直接以 `File not found: ` 失败（错误消息里的路径是空串，极易误判为 cwd 问题）。所有终端命令都要先经 `where`/`which` 解析成绝对路径，并过滤 `WindowsApps` 下的 App Execution Alias 占位符
 - **跨半字段名必须逐字对齐**：宿主半与浏览器半经 HTTP 通信、无编译期校验，字段名拼写不一致会静默回落到默认分支（曾因客户端发 `terminalType`、宿主半读 `profileId`，导致下拉菜单选了任何类型都开出默认 shell，且无任何报错）
 - **单文件行数阈值**：建议 <600 行。超过时按职责边界拆分到子模块，不要按"太长了"随意切半
